@@ -1,0 +1,6 @@
+{
+  "facewidget": {
+    "labelResNameInSetting": "lock_distance_widget_name",
+    "actionDetailSetting": "android.intent.action.MAIN"
+  }
+}

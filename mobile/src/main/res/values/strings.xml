@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Sideby</string>
+    <string name="widget_name">Sideby Status &amp; Jarak</string>
+    <string name="widget_description">Widget status, baterai, dan jarak real-time (Homescreen)</string>
+    <string name="snapshot_widget_name">Sideby Foto Locket</string>
+    <string name="snapshot_widget_description">Widget foto harian terakhir yang dikirim pasangan</string>
+    <string name="lock_distance_widget_name">Sideby Jarak Pasangan (Lock Screen)</string>
+    <string name="lock_distance_widget_description">Widget jarak dengan pasangan transparan/clear untuk Lock Screen Samsung</string>
+</resources>

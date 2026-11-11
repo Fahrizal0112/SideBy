@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="com.samsung.systemui.permission.FACE_WIDGET" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_heart"
+        android:roundIcon="@drawable/ic_heart"
+        android:label="Sideby"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Sideby">
+
+        <meta-data
+            android:name="com.samsung.systemui.facewidget.executable"
+            android:resource="@raw/facewidgets" />
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Sideby">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Listener Service untuk sinkronisasi pesan dari Wear OS -->
+        <service
+            android:name=".service.PhoneWearListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/sideby"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
+
+        <!-- Home Screen & Lock Screen Status & Distance Widget Receiver -->
+        <receiver
+            android:name=".widget.SidebyWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sideby_widget_info" />
+        </receiver>
+
+        <!-- Home Screen Locket / Daily Snapshot Widget Receiver -->
+        <receiver
+            android:name=".widget.SidebySnapshotWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sideby_snapshot_widget_info" />
+        </receiver>
+
+        <!-- Lock Screen Transparent / Clear Distance Widget Receiver (Samsung One UI Lockscreen) -->
+        <receiver
+            android:name=".widget.SidebyLockDistanceWidgetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sideby_lock_distance_widget_info" />
+        </receiver>
+
+        <!-- Layanan Sinkronisasi Latar Belakang (Jarak, Baterai, Foto & Notifikasi) -->
+        <service
+            android:name=".service.SidebyBackgroundSyncService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Receiver saat HP baru dinyalakan (Boot) -->
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- FileProvider untuk mengambil foto langsung dari Kamera HP -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Atribut Ekstensi Samsung One UI Lock Screen & AOD Widgets -->
+    <attr name="targetHost">
+        <flag name="home" value="0x1" />
+        <flag name="lockAndAod" value="0x2" />
+    </attr>
+
+    <attr name="widgetStyle">
+        <flag name="colorful" value="0x1" />
+        <flag name="monotone" value="0x2" />
+    </attr>
+
+    <attr name="lockWidgetSize">
+        <flag name="tiny" value="0x1" />
+        <flag name="small" value="0x2" />
+    </attr>
+
+    <declare-styleable name="AppWidgetProviderInfo">
+        <attr name="targetHost" />
+        <attr name="widgetStyle" />
+        <attr name="lockWidgetSize" />
+    </declare-styleable>
+</resources>
