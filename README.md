@@ -52,8 +52,10 @@ loveproject/
 
 ---
 
-## 📦 File APK Siap Pakai
+## 📦 Unduh & Update
 
-File APK yang sudah di-compile dan siap diinstall:
-* **HP Android:** [Sideby-Phone.apk](Sideby-Phone.apk)
-* **Wear OS Smartwatch:** [Sideby-WearOS.apk](Sideby-WearOS.apk)
+APK terbaru ada di halaman [Releases](https://github.com/Fahrizal0112/SideBy/releases/latest) (`Sideby-Phone.apk`).
+Setelah terpasang, aplikasi mengecek versi baru sendiri saat dibuka dan lewat **Setelan → Pembaruan aplikasi**.
+Android tetap meminta kamu mengetuk "Pasang" tiap update, dan izin "Install aplikasi tidak dikenal" cukup diberikan sekali.
+
+Merilis versi baru: naikkan `versionCode` dan `versionName` di `mobile/build.gradle.kts`, lalu jalankan `./release.sh "catatan perubahan"`.

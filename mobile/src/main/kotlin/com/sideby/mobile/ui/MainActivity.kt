@@ -156,6 +156,9 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.TextButton
 import kotlin.random.Random
 import com.sideby.mobile.data.ChatMessage
+import com.sideby.mobile.update.UpdateInfo
+import com.sideby.mobile.update.UpdateManager
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.widthIn
@@ -715,6 +718,16 @@ fun SidebyMainApp(
     val context = LocalContext.current
     var currentTab by remember { mutableIntStateOf(initialTab) }
     var unreadChat by remember { mutableIntStateOf(0) }
+    var pendingUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+
+    // Cek update otomatis saat aplikasi dibuka (maksimal tiap 6 jam), tanpa mengganggu bila gagal / sudah terbaru.
+    LaunchedEffect(Unit) {
+        if (UpdateManager.shouldAutoCheck(context)) {
+            val r = UpdateManager.checkForUpdate(context)
+            if (r is UpdateManager.CheckResult.Available) pendingUpdate = r.info
+        }
+    }
+    pendingUpdate?.let { UpdateDialog(it) { pendingUpdate = null } }
 
     LaunchedEffect(currentTab) {
         var lastVersion = -1L
@@ -1621,6 +1634,133 @@ fun HomeScreenTab() {
             }
         }
     }
+}
+
+// ==========================================
+// UPDATE APLIKASI
+// ==========================================
+@Composable
+fun UpdateDialog(info: UpdateInfo, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var progress by remember { mutableStateOf<Float?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var needPermission by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (progress == null) onDismiss() },
+        containerColor = Color.White,
+        title = { Text("Versi ${info.versionName} tersedia", fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                Text(
+                    "Kamu memakai versi ${UpdateManager.installedVersionName(context)}." +
+                        if (info.sizeBytes > 0) " Ukuran unduhan ${"%.1f".format(info.sizeBytes / 1_048_576f)} MB." else "",
+                    fontSize = 14.sp,
+                    color = SidebyColors.TextMuted
+                )
+                if (info.notes.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(info.notes, fontSize = 14.sp, color = SidebyColors.TextDeep, lineHeight = 20.sp)
+                }
+                progress?.let { p ->
+                    Spacer(modifier = Modifier.height(14.dp))
+                    LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(), color = SidebyColors.RosePrimary)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Mengunduh ${(p * 100).toInt()}%", fontSize = 12.sp, color = SidebyColors.TextMuted)
+                }
+                if (needPermission) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Izinkan Sideby memasang aplikasi di layar yang baru terbuka, lalu kembali ke sini dan ketuk Lanjutkan.",
+                        fontSize = 13.sp,
+                        color = SidebyColors.BatteryWarn
+                    )
+                }
+                error?.let {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(it, fontSize = 13.sp, color = SidebyColors.BatteryLow)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = progress == null,
+                colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary),
+                onClick = {
+                    if (!UpdateManager.canInstallPackages(context)) {
+                        needPermission = true
+                        UpdateManager.openInstallPermissionSettings(context)
+                        return@Button
+                    }
+                    needPermission = false
+                    error = null
+                    progress = 0f
+                    scope.launch {
+                        val apk = UpdateManager.downloadApk(context, info) { progress = it }
+                        progress = null
+                        if (apk == null) {
+                            error = "Unduhan gagal. Cek koneksi internet lalu coba lagi."
+                        } else {
+                            UpdateManager.launchInstaller(context, apk)
+                            onDismiss()
+                        }
+                    }
+                }
+            ) { Text(if (needPermission) "Lanjutkan" else "Unduh & pasang") }
+        },
+        dismissButton = {
+            TextButton(enabled = progress == null, onClick = onDismiss) { Text("Nanti", color = SidebyColors.TextMuted) }
+        }
+    )
+}
+
+@Composable
+private fun UpdateCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var available by remember { mutableStateOf<UpdateInfo?>(null) }
+
+    SectionCard {
+        Text("Pembaruan aplikasi", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = SidebyColors.TextDeep)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            message ?: "Cek apakah ada versi Sideby yang lebih baru.",
+            fontSize = 13.sp,
+            color = SidebyColors.TextMuted
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedButton(
+            onClick = {
+                checking = true
+                message = null
+                scope.launch {
+                    when (val r = UpdateManager.checkForUpdate(context)) {
+                        is UpdateManager.CheckResult.Available -> {
+                            available = r.info
+                            message = "Versi ${r.info.versionName} tersedia."
+                        }
+                        UpdateManager.CheckResult.UpToDate -> message = "Kamu sudah memakai versi terbaru."
+                        UpdateManager.CheckResult.Failed -> message = "Tidak bisa mengecek sekarang. Coba lagi nanti."
+                    }
+                    checking = false
+                }
+            },
+            enabled = !checking,
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, SidebyColors.GlassBorder)
+        ) {
+            if (checking) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
+            } else {
+                Text("Cek pembaruan", color = SidebyColors.RosePrimary, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+    available?.let { UpdateDialog(it) { available = null } }
 }
 
 // ==========================================
@@ -2560,6 +2700,10 @@ fun SettingsScreenTab(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        UpdateCard()
 
         Spacer(modifier = Modifier.height(16.dp))
 
