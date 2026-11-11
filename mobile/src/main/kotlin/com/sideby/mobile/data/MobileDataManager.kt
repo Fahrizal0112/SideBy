@@ -510,6 +510,13 @@ object MobileDataManager {
         true
     }
 
+    fun updateChatMessage(context: Context, id: String, transform: (ChatMessage) -> ChatMessage) = synchronized(statusLock) {
+        val cur = getChatMessages(context)
+        if (cur.any { it.id == id }) {
+            saveChatMessages(context, cur.map { if (it.id == id) transform(it) else it })
+        }
+    }
+
     fun markChatMessageSent(context: Context, id: String) = synchronized(statusLock) {
         val cur = getChatMessages(context)
         if (cur.any { it.id == id && it.pending }) {

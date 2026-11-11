@@ -201,6 +201,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.runtime.mutableFloatStateOf
+import com.sideby.mobile.util.VoiceNotes
+import com.sideby.mobile.util.VoicePlayer
+import com.sideby.mobile.util.VoiceRecorder
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 
@@ -1437,7 +1445,9 @@ fun HomeScreenTab() {
                             val whenText = relativeTime(latestSnapshot.timestamp, now)
                             val isPending = latestSnapshot.id in pendingIds
                             Text(
-                                text = if (isPending) "Belum terkirim, menunggu koneksi"
+                                text = if (isPending) {
+                                    if (now - latestSnapshot.timestamp < 25_000L) "Mengunggah..." else "Belum terkirim, menunggu koneksi"
+                                }
                                 else listOfNotNull(who, whenText.ifEmpty { null }).joinToString(", "),
                                 fontFamily = FontFamily.Serif,
                                 fontStyle = FontStyle.Italic,
@@ -1850,13 +1860,172 @@ internal suspend fun sendChatMessage(context: Context, text: String, photoId: St
     CloudSyncManager.flushPendingChats(context, wait = true)
 }
 
+/** Simpan rekaman lalu kirim. Gagal terkirim = tetap di antrean dan dicoba lagi otomatis, seperti chat biasa. */
+internal suspend fun sendVoiceMessage(context: Context, recording: File, millis: Long) {
+    val me = MobileDataManager.getMyStatus(context)
+    val msg = ChatMessage(
+        senderId = MobileDataManager.getMyDeviceId(context),
+        senderName = me.name,
+        // Teks ini hanya terlihat di aplikasi versi lama yang belum bisa memutar voice note.
+        text = "[Pesan suara]",
+        audioMillis = millis,
+        pending = true
+    )
+    withContext(Dispatchers.IO) {
+        recording.copyTo(VoiceNotes.file(context, msg.id), overwrite = true)
+        recording.delete()
+        MobileDataManager.addChatMessage(context, msg)
+    }
+    CloudSyncManager.flushPendingChats(context, wait = true)
+}
+
 @Composable
 internal fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    /** Bila diisi, tombol mikrofon muncul saat kolom teks kosong (untuk voice note). */
+    onVoice: ((File, Long) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val recorder = remember { VoiceRecorder(context) }
+    var recording by remember { mutableStateOf(false) }
+    var elapsed by remember { mutableLongStateOf(0L) }
+    var level by remember { mutableFloatStateOf(0f) }
+
+    // Rekaman yang ditinggalkan (pindah tab / layar ditutup) dibuang, bukan terkirim diam-diam.
+    DisposableEffect(Unit) { onDispose { recorder.cancel() } }
+
+    val finishRecording: () -> Unit = {
+        recording = false
+        val result = recorder.stop()
+        if (result == null) {
+            Toast.makeText(context, "Rekaman terlalu singkat", Toast.LENGTH_SHORT).show()
+        } else {
+            onVoice?.invoke(result.first, result.second)
+        }
+    }
+
+    LaunchedEffect(recording) {
+        if (!recording) return@LaunchedEffect
+        while (recorder.isRecording) {
+            elapsed = recorder.elapsedMillis()
+            // Naik cepat, turun pelan, supaya batang suaranya enak dilihat.
+            val target = recorder.level()
+            level = if (target > level) target else level * 0.8f + target * 0.2f
+            if (elapsed >= VoiceNotes.MAX_MILLIS - 200) {
+                finishRecording()
+                break
+            }
+            delay(60)
+        }
+    }
+
+    val startRecording: () -> Unit = {
+        if (recorder.start()) {
+            elapsed = 0L
+            level = 0f
+            recording = true
+        } else {
+            Toast.makeText(context, "Mikrofon tidak bisa dipakai sekarang", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startRecording()
+        else Toast.makeText(context, "Izin mikrofon diperlukan untuk voice note", Toast.LENGTH_SHORT).show()
+    }
+    val requestRecording: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            startRecording()
+        } else {
+            micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    if (recording) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(SidebyColors.GlassBorder)
+                    .bounceClick(pressedScale = 0.88f) {
+                        recording = false
+                        recorder.cancel()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Delete, contentDescription = "Batalkan rekaman", tint = SidebyColors.TextMuted, modifier = Modifier.size(22.dp))
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = SidebyColors.TintRose
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val blink = rememberInfiniteTransition(label = "recDot")
+                    val dotAlpha by blink.animateFloat(
+                        initialValue = 1f, targetValue = 0.25f,
+                        animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
+                        label = "recDotAlpha"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .graphicsLayer { alpha = dotAlpha }
+                            .clip(CircleShape)
+                            .background(SidebyColors.BatteryLow)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    val sec = (elapsed / 1000).toInt()
+                    Text(
+                        "%d:%02d".format(sec / 60, sec % 60),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = SidebyColors.TextDeep
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    // Batang suara bergerak mengikuti volume bicara.
+                    Row(
+                        modifier = Modifier.weight(1f).height(26.dp),
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val bars = 18
+                        repeat(bars) { i ->
+                            val wave = (kotlin.math.sin((elapsed / 130.0) + i * 0.7) + 1.0).toFloat() / 2f
+                            val h = (4f + 22f * (level * (0.35f + 0.65f * wave))).coerceIn(4f, 26f)
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .height(h.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(SidebyColors.RosePrimary.copy(alpha = 0.75f))
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(SidebyColors.RosePrimary)
+                    .bounceClick(pressedScale = 0.86f) { finishRecording() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Kirim voice note", tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+        }
+        return
+    }
+
     Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
             value = value,
@@ -1875,11 +2044,12 @@ internal fun ChatInputBar(
         )
         Spacer(modifier = Modifier.width(8.dp))
         val enabled = value.isNotBlank()
+        val showMic = !enabled && onVoice != null
         val sendScope = rememberCoroutineScope()
         val fly = remember { Animatable(0f) }
         // Tombol yang aktif membesar sedikit; saat ditekan pesawat kertasnya terbang keluar lalu muncul lagi.
         val buttonScale by animateFloatAsState(
-            targetValue = if (enabled) 1f else 0.88f,
+            targetValue = if (enabled || showMic) 1f else 0.88f,
             animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
             label = "sendScale"
         )
@@ -1889,7 +2059,13 @@ internal fun ChatInputBar(
                 .size(48.dp)
                 .graphicsLayer { scaleX = buttonScale; scaleY = buttonScale }
                 .clip(CircleShape)
-                .background(if (enabled) SidebyColors.RosePrimary else SidebyColors.GlassBorder)
+                .background(
+                    when {
+                        enabled -> SidebyColors.RosePrimary
+                        showMic -> SidebyColors.TintRose
+                        else -> SidebyColors.GlassBorder
+                    }
+                )
                 .then(
                     if (enabled) Modifier.bounceClick(pressedScale = 0.86f) {
                         onSend()
@@ -1899,22 +2075,27 @@ internal fun ChatInputBar(
                             fly.snapTo(-1f)
                             fly.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium))
                         }
-                    } else Modifier
+                    } else if (showMic) Modifier.bounceClick(pressedScale = 0.86f) { requestRecording() }
+                    else Modifier
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.Send,
-                contentDescription = "Kirim",
-                tint = Color.White,
-                modifier = Modifier
-                    .size(22.dp)
-                    .graphicsLayer {
-                        translationX = fly.value * 30.dp.toPx()
-                        translationY = -fly.value * 30.dp.toPx()
-                        alpha = 1f - kotlin.math.abs(fly.value).coerceAtMost(1f) * 0.9f
-                    }
-            )
+            if (showMic) {
+                Icon(Icons.Filled.Mic, contentDescription = "Rekam voice note", tint = SidebyColors.RosePrimary, modifier = Modifier.size(24.dp))
+            } else {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Kirim",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            translationX = fly.value * 30.dp.toPx()
+                            translationY = -fly.value * 30.dp.toPx()
+                            alpha = 1f - kotlin.math.abs(fly.value).coerceAtMost(1f) * 0.9f
+                        }
+                )
+            }
         }
     }
 }
@@ -1931,6 +2112,7 @@ fun ChatScreenTab() {
     var input by remember { mutableStateOf("") }
     var openedPhoto by remember { mutableStateOf<DailySnapshot?>(null) }
     val listState = rememberLazyListState()
+    DisposableEffect(Unit) { onDispose { VoicePlayer.stop() } }
 
     // "Chat terbuka" hanya benar saat layar benar-benar terlihat (RESUMED). Jika kamu menekan Home / mengunci
     // layar, pesan masuk harus tetap memunculkan notifikasi dan tidak ditandai terbaca.
@@ -2047,7 +2229,8 @@ fun ChatScreenTab() {
                         val text = input
                         input = ""
                         coroutineScope.launch { sendChatMessage(context, text, null) }
-                    }
+                    },
+                    onVoice = { file, ms -> coroutineScope.launch { sendVoiceMessage(context, file, ms) } }
                 )
             }
         }
@@ -2102,21 +2285,108 @@ private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, o
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                 }
-                Text(
-                    msg.text,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                    color = if (mine) Color.White else SidebyColors.TextDeep
-                )
+                if (msg.audioMillis > 0L) {
+                    VoiceBubbleContent(msg = msg, mine = mine)
+                } else {
+                    Text(
+                        msg.text,
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        color = if (mine) Color.White else SidebyColors.TextDeep
+                    )
+                }
             }
         }
         Text(
-            text = if (msg.pending) "Belum terkirim, menunggu koneksi"
-            else SimpleDateFormat("HH:mm", Locale("id", "ID")).format(Date(msg.timestamp)),
+            text = if (msg.pending) {
+                if (System.currentTimeMillis() - msg.timestamp < 25_000L) "Mengirim..." else "Belum terkirim, menunggu koneksi"
+            } else SimpleDateFormat("HH:mm", Locale("id", "ID")).format(Date(msg.timestamp)),
             fontSize = 11.sp,
             color = if (msg.pending) SidebyColors.BatteryWarn else SidebyColors.TextSubtle,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
         )
+    }
+}
+
+private fun formatClock(ms: Long): String {
+    val sec = (ms / 1000).toInt().coerceAtLeast(0)
+    return "%d:%02d".format(sec / 60, sec % 60)
+}
+
+@Composable
+private fun VoiceBubbleContent(msg: ChatMessage, mine: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var downloading by remember(msg.id) { mutableStateOf(false) }
+    val isThis = VoicePlayer.playingId == msg.id
+    val playing = isThis && VoicePlayer.isPlaying
+    val progress = if (isThis && VoicePlayer.durationMs > 0L) {
+        (VoicePlayer.positionMs.toFloat() / VoicePlayer.durationMs).coerceIn(0f, 1f)
+    } else 0f
+    val strong = if (mine) Color.White else SidebyColors.RosePrimary
+    val faint = if (mine) Color.White.copy(alpha = 0.4f) else SidebyColors.RosePrimary.copy(alpha = 0.25f)
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.widthIn(min = 200.dp)) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(if (mine) Color.White.copy(alpha = 0.22f) else SidebyColors.TintRose)
+                .bounceClick(pressedScale = 0.88f) {
+                    if (downloading) return@bounceClick
+                    scope.launch {
+                        var f = VoiceNotes.file(context, msg.id)
+                        if (!f.exists() || f.length() == 0L) {
+                            downloading = true
+                            f = VoiceNotes.ensureLocal(context, msg) ?: f
+                            downloading = false
+                        }
+                        if (f.exists() && f.length() > 0L) VoicePlayer.toggle(msg.id, f)
+                        else Toast.makeText(context, "Voice note belum bisa diunduh. Cek koneksi internet.", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (downloading) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = strong, strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (playing) "Jeda" else "Putar",
+                    tint = strong,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column {
+            // Gelombang tiruan yang tetap sama untuk setiap pesan; bagian yang sudah diputar berwarna pekat.
+            val heights = remember(msg.id) {
+                val r = Random(msg.id.hashCode())
+                List(26) { 0.25f + 0.75f * r.nextFloat() }
+            }
+            Canvas(modifier = Modifier.width(150.dp).height(28.dp)) {
+                val n = heights.size
+                val step = size.width / n
+                val barW = step * 0.55f
+                heights.forEachIndexed { i, h ->
+                    val x = i * step + (step - barW) / 2f
+                    val barH = size.height * h
+                    val played = (i + 0.5f) / n <= progress
+                    drawRoundRect(
+                        color = if (played) strong else faint,
+                        topLeft = Offset(x, (size.height - barH) / 2f),
+                        size = androidx.compose.ui.geometry.Size(barW, barH),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW / 2f)
+                    )
+                }
+            }
+            Text(
+                text = if (isThis) "${formatClock(VoicePlayer.positionMs)} / ${formatClock(msg.audioMillis)}" else formatClock(msg.audioMillis),
+                fontSize = 11.sp,
+                color = if (mine) Color.White.copy(alpha = 0.85f) else SidebyColors.TextMuted
+            )
+        }
     }
 }
 

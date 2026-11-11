@@ -16,6 +16,9 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     /** Id foto yang sedang dibalas / dikomentari (null = chat biasa). */
     val photoId: String? = null,
+    /** Voice note: alamat berkas rekaman di server perantara, dan lamanya (ms). 0 = bukan voice note. */
+    val audioUrl: String? = null,
+    val audioMillis: Long = 0L,
     /** Hanya dipakai lokal: true = pesan saya yang belum berhasil terkirim. */
     val pending: Boolean = false
 ) {

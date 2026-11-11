@@ -82,11 +82,20 @@ class SidebyBackgroundSyncService : Service() {
     }
 
     private fun startSyncLoop() {
+        // Langganan langsung ke tiap relay: pesan chat tiba saat itu juga, tidak menunggu putaran polling.
+        CloudSyncManager.relayServers.forEach { server ->
+            serviceScope.launch {
+                try {
+                    CloudSyncManager.runRelayStream(applicationContext, server)
+                } catch (_: Exception) {}
+            }
+        }
         serviceScope.launch {
             while (isActive) {
                 try {
-                    // 1. Ambil update terbaru dari pasangan (foto, status, sentuhan)
-                    CloudSyncManager.pollPartnerUpdates(applicationContext)
+                    // 1. Ambil update terbaru dari pasangan sebagai jaring pengaman (jalan terpisah supaya
+                    //    server yang lambat tidak menunda langkah-langkah lain di putaran ini).
+                    serviceScope.launch { CloudSyncManager.pollPartnerUpdates(applicationContext) }
 
                     // 1b. Coba kirim ulang foto yang tertunda (non-blocking agar polling tidak tertahan)
                     if (MobileDataManager.getPendingSnapshotIds(applicationContext).isNotEmpty()) {

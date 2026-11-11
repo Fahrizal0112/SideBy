@@ -12,8 +12,22 @@ import com.sideby.shared.model.CoupleRoomConfig
 import com.sideby.shared.model.DailySnapshot
 import com.sideby.shared.model.PartnerStatus
 import com.sideby.shared.model.PokeMessage
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -48,11 +62,11 @@ object CloudSyncManager {
         "https://ntfy.sh/sideby-",
         "https://ntfy.envs.net/sideby-"
     )
+    val relayServers: List<String> get() = RELAY_SERVERS
 
     // Cegah pesan berulang dari cache ntfy (Deduplikasi Pesan)
     private val processedMessageIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
     private val processedSnapshotIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
-    private var lastPollEpochSeconds: Long = 0L
 
     fun getRoomUrl(base: String, roomCode: String): String {
         val clean = roomCode.lowercase().trim().replace(" ", "-").removePrefix("sideby-")
@@ -168,90 +182,127 @@ object CloudSyncManager {
         false
     }
 
+    /** Server yang terakhir berhasil dipakai dicoba lebih dulu pada pengiriman berikutnya. */
+    @Volatile private var preferredUploadHost = 0
+    @Volatile private var preferredRelay = 0
+
+    private const val UPLOAD_HEDGE_MS = 3500L
+    private const val RELAY_HEDGE_MS = 1500L
+
+    suspend fun uploadSnapshotImage(imageBytes: ByteArray): String? =
+        uploadFile(imageBytes, "snapshot.jpg", "image/jpeg")
+
     /**
-     * Upload binary gambar snapshot ke hosting publik (ntfy.envs.net / ntfy.sh / Uguu)
+     * Unggah file (foto / voice note) ke hosting publik: ntfy.envs.net, ntfy.sh, lalu Uguu.
+     * Server tidak lagi dicoba satu per satu sambil menunggu timeout. Server pertama (yang terakhir berhasil)
+     * langsung jalan; bila gagal atau belum selesai dalam beberapa detik, server berikutnya ikut jalan, dan
+     * yang pertama berhasil menang. Koneksi yang kalah diputus supaya tidak rebutan bandwidth.
      */
-    suspend fun uploadSnapshotImage(imageBytes: ByteArray): String? = withContext(Dispatchers.IO) {
-        // Coba 1: ntfy.envs.net (sangat stabil & cepat, tanpa batas harian ketat, direct PUT)
-        val envsUrl = uploadToNtfyServer("https://ntfy.envs.net", imageBytes)
-        if (!envsUrl.isNullOrBlank()) return@withContext envsUrl
+    suspend fun uploadFile(bytes: ByteArray, filename: String, mime: String): String? {
+        val hostCount = 3
+        val order = (0 until hostCount).sortedBy { if (it == preferredUploadHost) -1 else it }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val connections = java.util.Collections.synchronizedList(mutableListOf<HttpURLConnection>())
+        val track: (HttpURLConnection) -> Unit = { connections.add(it) }
+        val result = CompletableDeferred<Pair<Int, String>?>()
+        val failed = List(hostCount) { CompletableDeferred<Unit>() }
+        val remaining = AtomicInteger(hostCount)
 
-        // Coba 2: Ntfy.sh attachment upload
-        val ntfyUrl = uploadToNtfyServer("https://ntfy.sh", imageBytes)
-        if (!ntfyUrl.isNullOrBlank()) return@withContext ntfyUrl
-
-        // Coba 3: Uguu.se (fallback multipart upload)
-        val uguuUrl = uploadToUguu(imageBytes)
-        if (!uguuUrl.isNullOrBlank()) return@withContext uguuUrl
-
-        null
-    }
-
-    private fun uploadToNtfyServer(serverBase: String, imageBytes: ByteArray): String? {
-        return try {
-            val topic = "sideby-uploads-" + UUID.randomUUID().toString().take(10)
-            val url = URL("$serverBase/$topic")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "PUT"
-            conn.doOutput = true
-            conn.setRequestProperty("Filename", "snapshot.jpg")
-            conn.setRequestProperty("Content-Type", "image/jpeg")
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-
-            conn.outputStream.use { it.write(imageBytes) }
-
-            if (conn.responseCode in 200..299) {
-                val responseText = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                val root = JSONObject(responseText)
-                val attachment = root.optJSONObject("attachment")
-                attachment?.optString("url")
-            } else {
-                conn.disconnect()
-                null
+        order.forEachIndexed { pos, host ->
+            scope.launch {
+                if (pos > 0) withTimeoutOrNull(UPLOAD_HEDGE_MS * pos) { failed[pos - 1].await() }
+                if (result.isCompleted) return@launch
+                val url = try {
+                    when (host) {
+                        0 -> uploadToNtfyServer("https://ntfy.envs.net", bytes, filename, mime, track)
+                        1 -> uploadToNtfyServer("https://ntfy.sh", bytes, filename, mime, track)
+                        else -> uploadToUguu(bytes, filename, mime, track)
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+                if (!url.isNullOrBlank()) result.complete(host to url)
+                failed[pos].complete(Unit)
+                if (remaining.decrementAndGet() == 0) result.complete(null)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
+        }
+
+        // Batas total: 30 dtk + waktu untuk kecepatan unggah minimal ~12 KB/dtk.
+        val deadline = 30_000L + bytes.size / 12L
+        try {
+            val winner = withTimeoutOrNull(deadline) { result.await() }
+            if (winner != null) preferredUploadHost = winner.first
+            return winner?.second
+        } finally {
+            scope.cancel()
+            synchronized(connections) {
+                connections.forEach { try { it.disconnect() } catch (_: Exception) {} }
+            }
         }
     }
 
-    private fun uploadToUguu(imageBytes: ByteArray): String? {
+    private fun uploadToNtfyServer(
+        serverBase: String, bytes: ByteArray, filename: String, mime: String, track: (HttpURLConnection) -> Unit
+    ): String? {
+        val topic = "sideby-uploads-" + UUID.randomUUID().toString().take(10)
+        val conn = URL("$serverBase/$topic").openConnection() as HttpURLConnection
+        track(conn)
+        return try {
+            conn.requestMethod = "PUT"
+            conn.doOutput = true
+            conn.setRequestProperty("Filename", filename)
+            conn.setRequestProperty("Content-Type", mime)
+            conn.connectTimeout = 8000
+            conn.readTimeout = 25000
+            // Streaming dengan panjang tetap: tidak menampung salinan kedua di memori, dan tersambung lebih cepat.
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.outputStream.use { it.write(bytes) }
+            if (conn.responseCode in 200..299) {
+                val responseText = conn.inputStream.bufferedReader().use { it.readText() }
+                JSONObject(responseText).optJSONObject("attachment")?.optString("url")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            try { conn.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun uploadToUguu(
+        bytes: ByteArray, filename: String, mime: String, track: (HttpURLConnection) -> Unit
+    ): String? {
+        val conn = URL("https://uguu.se/upload.php").openConnection() as HttpURLConnection
+        track(conn)
         return try {
             val boundary = "----SidebyBoundary" + System.currentTimeMillis()
-            val url = URL("https://uguu.se/upload.php")
-            val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             conn.setRequestProperty("User-Agent", "Sideby/1.0")
-            conn.connectTimeout = 12000
-            conn.readTimeout = 12000
+            conn.connectTimeout = 8000
+            conn.readTimeout = 25000
 
-            val head = "--$boundary\r\nContent-Disposition: form-data; name=\"files[]\"; filename=\"snapshot.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".toByteArray(Charsets.UTF_8)
+            val head = "--$boundary\r\nContent-Disposition: form-data; name=\"files[]\"; filename=\"$filename\"\r\nContent-Type: $mime\r\n\r\n".toByteArray(Charsets.UTF_8)
             val tail = "\r\n--$boundary--\r\n".toByteArray(Charsets.UTF_8)
-
+            conn.setFixedLengthStreamingMode(head.size + bytes.size + tail.size)
             conn.outputStream.use { os ->
                 os.write(head)
-                os.write(imageBytes)
+                os.write(bytes)
                 os.write(tail)
                 os.flush()
             }
-
             if (conn.responseCode in 200..299) {
                 val responseText = conn.inputStream.bufferedReader().use { it.readText() }
-                conn.disconnect()
-                val root = JSONObject(responseText)
-                val files = root.optJSONArray("files")
-                files?.optJSONObject(0)?.optString("url")
+                JSONObject(responseText).optJSONArray("files")?.optJSONObject(0)?.optString("url")
             } else {
-                conn.disconnect()
                 null
             }
         } catch (e: Exception) {
-            e.printStackTrace()
             null
+        } finally {
+            try { conn.disconnect() } catch (_: Exception) {}
         }
     }
 
@@ -349,7 +400,15 @@ object CloudSyncManager {
     suspend fun sendChatMessage(context: Context, msg: com.sideby.mobile.data.ChatMessage): Boolean = withContext(Dispatchers.IO) {
         val roomCode = MobileDataManager.getRoomCode(context)
         val role = if (MobileDataManager.isCreator(context)) "CREATOR" else "PARTNER"
-        val wire = msg.copy(pending = false)
+        var wire = msg.copy(pending = false)
+        // Voice note: unggah dulu (sekali saja; URL-nya disimpan supaya percobaan ulang tidak mengunggah lagi).
+        if (msg.audioMillis > 0L && msg.audioUrl.isNullOrBlank()) {
+            val file = com.sideby.mobile.util.VoiceNotes.file(context, msg.id)
+            if (!file.exists() || file.length() == 0L) return@withContext true // rekaman hilang; jangan macetkan antrean
+            val url = uploadFile(file.readBytes(), "voice.m4a", "audio/mp4") ?: return@withContext false
+            MobileDataManager.updateChatMessage(context, msg.id) { it.copy(audioUrl = url) }
+            wire = wire.copy(audioUrl = url)
+        }
         sendToRelay(
             roomCode,
             SyncPayload(type = "CHAT", senderRole = role, senderId = MobileDataManager.getMyDeviceId(context), chatData = wire)
@@ -409,37 +468,58 @@ object CloudSyncManager {
         }
     }
 
-    private fun sendToRelay(roomCode: String, payload: SyncPayload): Boolean {
-        var anySuccess = false
-        val jsonString = json.encodeToString(payload)
+    /**
+     * Kirim ke relay dengan "hedging": relay utama langsung dicoba; bila gagal atau belum menjawab dalam
+     * 1,5 dtk, relay cadangan ikut dicoba. Yang pertama berhasil menentukan hasilnya. Sebelumnya relay dicoba
+     * berurutan dengan timeout 6 dtk masing-masing, sehingga satu server lambat menahan setiap pesan.
+     * Kalau kedua relay sempat menerima, penerima membuang duplikatnya lewat id pesan.
+     */
+    private suspend fun sendToRelay(roomCode: String, payload: SyncPayload): Boolean {
+        val body = json.encodeToString(payload).toByteArray(Charsets.UTF_8)
+        val count = RELAY_SERVERS.size
+        val order = (0 until count).sortedBy { if (it == preferredRelay) -1 else it }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val result = CompletableDeferred<Boolean>()
+        val failed = List(count) { CompletableDeferred<Unit>() }
+        val remaining = AtomicInteger(count)
 
-        for (serverBase in RELAY_SERVERS) {
-            try {
-                val url = URL(getRoomUrl(serverBase, roomCode))
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("Title", "Sideby ${payload.type}")
-                conn.connectTimeout = 6000
-                conn.readTimeout = 6000
-
-                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                    writer.write(jsonString)
-                    writer.flush()
+        order.forEachIndexed { pos, idx ->
+            scope.launch {
+                if (pos > 0) withTimeoutOrNull(RELAY_HEDGE_MS) { failed[pos - 1].await() }
+                if (result.isCompleted) return@launch
+                val ok = postToRelay(RELAY_SERVERS[idx], roomCode, payload.type, body)
+                if (ok) {
+                    preferredRelay = idx
+                    result.complete(true)
                 }
-
-                val responseCode = conn.responseCode
-                conn.disconnect()
-                if (responseCode in 200..299) {
-                    anySuccess = true
-                    break // Sukses terkirim ke relay utama, tidak perlu duplikasi ke relay kedua
-                }
-            } catch (e: Exception) {
-                // Lanjut coba server berikutnya
+                failed[pos].complete(Unit)
+                if (remaining.decrementAndGet() == 0) result.complete(false)
             }
         }
-        return anySuccess
+        try {
+            return withTimeoutOrNull(15_000L) { result.await() } ?: false
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    private fun postToRelay(serverBase: String, roomCode: String, type: String, body: ByteArray): Boolean {
+        return try {
+            val conn = URL(getRoomUrl(serverBase, roomCode)).openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("Title", "Sideby $type")
+            conn.connectTimeout = 5000
+            conn.readTimeout = 6000
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private val pollMutex = kotlinx.coroutines.sync.Mutex()
@@ -455,46 +535,99 @@ object CloudSyncManager {
         if (roomCode.isBlank() || roomCode == "BELUM_DISET") return@withContext false
         if (!pollMutex.tryLock()) return@withContext false
         try {
-            val pollStart = System.currentTimeMillis() / 1000
-            // Kursor disimpan permanen. Sebelumnya setiap aplikasi dibuka ulang hanya mengambil 5 menit
-            // terakhir, sehingga foto yang dikirim saat HP pasangan tertutup / diam di background hilang.
-            val sync = context.getSharedPreferences("sideby_sync", Context.MODE_PRIVATE)
-            val cursorKey = "last_poll_" + roomCode.lowercase().trim()
-            val cursor = if (lastPollEpochSeconds > 0) lastPollEpochSeconds else sync.getLong(cursorKey, 0L)
-            val sinceParam = if (cursor > 0) {
-                "${(pollStart - cursor + 10).coerceIn(10, 11 * 3600L)}s" // relay menyimpan pesan ~12 jam
-            } else {
-                "5m"
-            }
-
-            var success = false
-            for (serverBase in RELAY_SERVERS) {
-                try {
-                    val url = URL("${getRoomUrl(serverBase, roomCode)}/json?poll=1&since=$sinceParam")
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.requestMethod = "GET"
-                    conn.connectTimeout = 6000
-                    conn.readTimeout = 6000
-
-                    if (conn.responseCode == 200) {
-                        val lines = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readLines() }
-                        conn.disconnect()
-                        lines.forEach { processIncomingRelayJson(context, it) }
-                        success = true
-                    } else {
-                        conn.disconnect()
-                    }
-                } catch (e: Exception) {
-                    // Lanjut ke relay berikutnya
-                }
-            }
-            if (success) {
-                lastPollEpochSeconds = pollStart
-                sync.edit().putLong(cursorKey, pollStart).apply()
-            }
-            success
+            // Semua relay dicek bersamaan (bukan berurutan), dan masing-masing punya kursor sendiri:
+            // relay yang gagal tidak membuat pesan di relay itu terlewat, dan relay lambat tidak menahan yang lain.
+            coroutineScope {
+                RELAY_SERVERS.map { server -> async { pollOneRelay(context, server, roomCode) } }.awaitAll()
+            }.any { it }
         } finally {
             pollMutex.unlock()
+        }
+    }
+
+    private fun serverTag(serverBase: String) = serverBase.removePrefix("https://").substringBefore("/")
+
+    private suspend fun pollOneRelay(context: Context, serverBase: String, roomCode: String): Boolean {
+        val pollStart = System.currentTimeMillis() / 1000
+        val room = roomCode.lowercase().trim()
+        val sync = context.getSharedPreferences("sideby_sync", Context.MODE_PRIVATE)
+        val cursorKey = "last_poll_${room}_${serverTag(serverBase)}"
+        // Kursor lama (satu untuk semua relay) dipakai sekali sebagai titik awal agar tidak ada pesan terlewat saat update.
+        val cursor = sync.getLong(cursorKey, sync.getLong("last_poll_$room", 0L))
+        val sinceParam = if (cursor > 0) {
+            "${(pollStart - cursor + 10).coerceIn(10, 11 * 3600L)}s" // relay menyimpan pesan ~12 jam
+        } else {
+            "5m"
+        }
+        return try {
+            val conn = URL("${getRoomUrl(serverBase, roomCode)}/json?poll=1&since=$sinceParam").openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 4000
+            conn.readTimeout = 5000
+            if (conn.responseCode == 200) {
+                val lines = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readLines() }
+                conn.disconnect()
+                lines.forEach { processIncomingRelayJson(context, it) }
+                sync.edit().putLong(cursorKey, pollStart).apply()
+                true
+            } else {
+                conn.disconnect()
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Langganan langsung ke satu relay (koneksi tetap terbuka). Pesan masuk dikirim server saat itu juga,
+     * jadi chat tidak lagi menunggu giliran polling tiap beberapa detik. Polling biasa tetap berjalan sebagai
+     * jaring pengaman; pesan ganda dibuang lewat deduplikasi.
+     */
+    suspend fun runRelayStream(context: Context, serverBase: String) {
+        var backoff = 3000L
+        while (currentCoroutineContext().isActive) {
+            val roomCode = MobileDataManager.getRoomCode(context)
+            if (roomCode.isBlank() || roomCode == "BELUM_DISET") {
+                delay(5000L)
+                continue
+            }
+            var conn: HttpURLConnection? = null
+            // Bacaan yang menggantung tidak bisa dibatalkan coroutine; putus koneksinya saat dibatalkan.
+            val cancelHandle = currentCoroutineContext().job.invokeOnCompletion { try { conn?.disconnect() } catch (_: Exception) {} }
+            try {
+                val sync = context.getSharedPreferences("sideby_sync", Context.MODE_PRIVATE)
+                val key = "stream_${roomCode.lowercase().trim()}_${serverTag(serverBase)}"
+                val now = System.currentTimeMillis() / 1000
+                val cursor = sync.getLong(key, 0L)
+                val since = if (cursor > 0) "${(now - cursor + 10).coerceIn(10, 11 * 3600L)}s" else "10s"
+                val c = URL("${getRoomUrl(serverBase, roomCode)}/json?since=$since").openConnection() as HttpURLConnection
+                conn = c
+                c.requestMethod = "GET"
+                c.connectTimeout = 8000
+                c.readTimeout = 100_000 // server mengirim keepalive tiap ~45 dtk
+                if (c.responseCode == 200) {
+                    backoff = 3000L
+                    BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8)).use { reader ->
+                        while (currentCoroutineContext().isActive) {
+                            val line = reader.readLine() ?: break
+                            if (line.isBlank()) continue
+                            processIncomingRelayJson(context, line)
+                            val t = try { JSONObject(line).optLong("time", 0L) } catch (_: Exception) { 0L }
+                            if (t > 0L) sync.edit().putLong(key, t).apply()
+                        }
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // sambungan putus / tidak ada sinyal: coba lagi setelah jeda
+            } finally {
+                cancelHandle.dispose()
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
+            delay(backoff)
+            backoff = (backoff * 2).coerceAtMost(30_000L)
         }
     }
 
@@ -625,13 +758,25 @@ object CloudSyncManager {
                     }
                     "CHAT" -> {
                         payload.chatData?.let { incoming ->
+                            val isVoice = !incoming.audioUrl.isNullOrBlank() && incoming.audioMillis > 0L
                             val text = incoming.text.take(com.sideby.mobile.data.ChatMessage.MAX_TEXT_LENGTH)
+                                .ifBlank { if (isVoice) "Pesan suara" else "" }
                             if (text.isBlank()) return@let
                             val msg = incoming.copy(text = text, pending = false)
                             if (MobileDataManager.addChatMessage(context, msg)) {
                                 if (!MobileDataManager.isChatScreenOpen) {
                                     val name = MobileDataManager.getPartnerStatus(context).name
-                                    NotificationHelper.showChatNotification(context, name, text, msg.photoId != null)
+                                    NotificationHelper.showChatNotification(
+                                        context, name,
+                                        if (isVoice) "Pesan suara" else text,
+                                        msg.photoId != null
+                                    )
+                                }
+                                // Unduh rekaman di latar belakang supaya langsung bisa diputar saat chat dibuka.
+                                if (isVoice) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        com.sideby.mobile.util.VoiceNotes.ensureLocal(context, msg)
+                                    }
                                 }
                             }
                         }
