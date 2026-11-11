@@ -735,7 +735,7 @@ fun SidebyMainApp(
             val v = MobileDataManager.dataVersion()
             if (v != lastVersion) {
                 lastVersion = v
-                if (currentTab == 1) withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
+                if (currentTab == 1 && MobileDataManager.isChatScreenOpen) withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
                 val n = withContext(Dispatchers.IO) { MobileDataManager.getUnreadChatCount(context) }
                 if (unreadChat != n) unreadChat = n
             }
@@ -1833,9 +1833,32 @@ fun ChatScreenTab() {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    DisposableEffect(Unit) {
-        MobileDataManager.isChatScreenOpen = true
-        onDispose { MobileDataManager.isChatScreenOpen = false }
+    // "Chat terbuka" hanya benar saat layar benar-benar terlihat (RESUMED). Jika kamu menekan Home / mengunci
+    // layar, pesan masuk harus tetap memunculkan notifikasi dan tidak ditandai terbaca.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var screenVisible by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> { MobileDataManager.isChatScreenOpen = true; screenVisible = true }
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> { MobileDataManager.isChatScreenOpen = false; screenVisible = false }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            MobileDataManager.isChatScreenOpen = true
+            screenVisible = true
+        }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            MobileDataManager.isChatScreenOpen = false
+        }
+    }
+
+    // Tandai terbaca hanya ketika layar terlihat, termasuk saat kembali ke aplikasi.
+    LaunchedEffect(screenVisible, messages.size) {
+        if (screenVisible) withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
     }
 
     LaunchedEffect(Unit) {
@@ -1851,7 +1874,6 @@ fun ChatScreenTab() {
                 if (needed.any { id -> photos.none { it.id == id } }) {
                     photos = withContext(Dispatchers.IO) { MobileDataManager.getSnapshotGallery(context) }
                 }
-                withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
             }
             delay(1000)
         }
