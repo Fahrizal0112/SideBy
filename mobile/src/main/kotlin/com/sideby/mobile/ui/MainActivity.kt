@@ -14,7 +14,20 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -187,6 +200,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 
 // ==========================================
 // PALET WARNA INTIM & ROMANTIS (HANDCRAFTED)
@@ -793,6 +809,7 @@ fun SidebyMainApp(
         }
     }
 
+    HeartBurstHost {
     Scaffold(
         containerColor = SidebyColors.CreamCanvas,
         topBar = {
@@ -819,12 +836,16 @@ fun SidebyMainApp(
                         color = SidebyColors.TextMuted
                     )
                 }
-                Surface(shape = RoundedCornerShape(50), color = SidebyColors.TintRose) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = SidebyColors.TintRose,
+                    modifier = Modifier.heartBurstClick(count = 9)
+                ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(14.dp).heartbeat())
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(MobileDataManager.getRoomCode(context), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = SidebyColors.RosePrimary)
                     }
@@ -855,7 +876,16 @@ fun SidebyMainApp(
                                         Badge(containerColor = SidebyColors.RosePrimary) { Text(if (unreadChat > 9) "9+" else "$unreadChat") }
                                     }
                                 }) {
-                                    Icon(if (currentTab == index) filled else outlined, contentDescription = label)
+                                    val iconScale by animateFloatAsState(
+                                        targetValue = if (currentTab == index) 1.22f else 1f,
+                                        animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMediumLow),
+                                        label = "navIconScale"
+                                    )
+                                    Icon(
+                                        if (currentTab == index) filled else outlined,
+                                        contentDescription = label,
+                                        modifier = Modifier.graphicsLayer { scaleX = iconScale; scaleY = iconScale }
+                                    )
                                 }
                             },
                             label = { Text(label, fontSize = 12.sp) },
@@ -877,15 +907,33 @@ fun SidebyMainApp(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            when (currentTab) {
-                0 -> HomeScreenTab()
-                1 -> ChatScreenTab()
-                2 -> RadarScreenTab()
-                3 -> MemoriesScreenTab()
-                4 -> SettingsScreenTab(onResetSetup = onResetSetup)
+            // Pindah tab: konten baru menyelinap dari arah tab yang dituju, yang lama memudar ke sisi sebaliknya.
+            AnimatedContent(
+                targetState = currentTab,
+                transitionSpec = {
+                    val dir = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(
+                        animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                        initialOffsetX = { it / 7 * dir }
+                    ) + fadeIn(tween(220, delayMillis = 60))) togetherWith
+                        (slideOutHorizontally(
+                            animationSpec = tween(180),
+                            targetOffsetX = { -it / 10 * dir }
+                        ) + fadeOut(tween(140)))
+                },
+                label = "tabContent"
+            ) { tab ->
+                when (tab) {
+                    0 -> HomeScreenTab()
+                    1 -> ChatScreenTab()
+                    2 -> RadarScreenTab()
+                    3 -> MemoriesScreenTab()
+                    4 -> SettingsScreenTab(onResetSetup = onResetSetup)
+                }
             }
         }
     }
+    } // HeartBurstHost
 }
 
 // ==========================================
@@ -917,10 +965,11 @@ private fun relativeTime(millis: Long, now: Long): String {
 @Composable
 private fun SectionCard(
     modifier: Modifier = Modifier,
+    index: Int = 0,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().popIn(index),
         shape = RoundedCornerShape(20.dp),
         color = SidebyColors.CardSurface,
         border = BorderStroke(1.dp, SidebyColors.GlassBorder)
@@ -947,6 +996,12 @@ private fun StatTile(
             Text(value, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, maxLines = 1)
             Text(label, fontSize = 12.sp, color = SidebyColors.TextMuted, maxLines = 1)
             if (progress != null) {
+                // Bar baterai mengisi dengan pantulan, dan bergeser halus saat persennya berubah.
+                val animatedProgress by animateFloatAsState(
+                    targetValue = progress,
+                    animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessVeryLow),
+                    label = "batteryBar"
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 Box(
                     modifier = Modifier
@@ -957,7 +1012,7 @@ private fun StatTile(
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(progress.coerceIn(0.04f, 1f))
+                            .fillMaxWidth(animatedProgress.coerceIn(0.04f, 1f))
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(50))
                             .background(progressColor)
@@ -1140,20 +1195,33 @@ fun HomeScreenTab() {
 
         // ---- Pasangan ----
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().popIn(0),
             shape = RoundedCornerShape(20.dp),
             color = SidebyColors.TintRose
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Avatar mengambang pelan; diketuk = goyang + hati melayang. Emoji mood berganti dengan efek pantul.
+                    var avatarTaps by remember { mutableIntStateOf(0) }
+                    val wobble = rememberWobble(avatarTaps)
                     Box(
                         modifier = Modifier
                             .size(60.dp)
+                            .floating(amplitudeDp = 3f)
+                            .graphicsLayer { rotationZ = wobble }
                             .clip(CircleShape)
-                            .background(Color.White),
+                            .background(Color.White)
+                            .heartBurstClick(count = 7) { avatarTaps++ },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(if (partner.isConnected) partner.mood.emoji else partner.name.firstOrNull()?.uppercase() ?: "?", fontSize = 28.sp)
+                        AnimatedContent(
+                            targetState = if (partner.isConnected) partner.mood.emoji else partner.name.firstOrNull()?.uppercase() ?: "?",
+                            transitionSpec = {
+                                (scaleIn(spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow)) + fadeIn(tween(120))) togetherWith
+                                    (scaleOut(tween(120)) + fadeOut(tween(100)))
+                            },
+                            label = "partnerEmoji"
+                        ) { face -> Text(face, fontSize = 28.sp) }
                     }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -1167,9 +1235,18 @@ fun HomeScreenTab() {
                         )
                         val recent = partner.isConnected && partner.lastUpdatedMillis > 0L && now - partner.lastUpdatedMillis < 10 * 60_000L
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Titik "aktif" berdenyut pelan supaya terasa hidup.
+                            val dotPulse = rememberInfiniteTransition(label = "activeDot")
+                            val dotScale by dotPulse.animateFloat(
+                                initialValue = 1f,
+                                targetValue = if (recent) 1.5f else 1f,
+                                animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                                label = "dotScale"
+                            )
                             Box(
                                 modifier = Modifier
                                     .size(7.dp)
+                                    .graphicsLayer { scaleX = dotScale; scaleY = dotScale }
                                     .clip(CircleShape)
                                     .background(if (recent) SidebyColors.BatteryOk else SidebyColors.TextSubtle)
                             )
@@ -1197,14 +1274,24 @@ fun HomeScreenTab() {
                         if (partner.isConnected) {
                             Text(partner.mood.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = SidebyColors.RosePrimary)
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (partner.customNote.isNotBlank()) "\u201C${partner.customNote}\u201D" else "Belum ada catatan",
-                                fontFamily = FontFamily.Serif,
-                                fontStyle = if (partner.customNote.isNotBlank()) FontStyle.Italic else FontStyle.Normal,
-                                fontSize = 16.sp,
-                                lineHeight = 23.sp,
-                                color = if (partner.customNote.isNotBlank()) SidebyColors.TextDeep else SidebyColors.TextSubtle
-                            )
+                            // Catatan baru naik dari bawah menggantikan yang lama.
+                            AnimatedContent(
+                                targetState = partner.customNote,
+                                transitionSpec = {
+                                    (slideInVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) { it / 2 } + fadeIn(tween(200))) togetherWith
+                                        (fadeOut(tween(120)))
+                                },
+                                label = "partnerNote"
+                            ) { note ->
+                                Text(
+                                    text = if (note.isNotBlank()) "\u201C$note\u201D" else "Belum ada catatan",
+                                    fontFamily = FontFamily.Serif,
+                                    fontStyle = if (note.isNotBlank()) FontStyle.Italic else FontStyle.Normal,
+                                    fontSize = 16.sp,
+                                    lineHeight = 23.sp,
+                                    color = if (note.isNotBlank()) SidebyColors.TextDeep else SidebyColors.TextSubtle
+                                )
+                            }
                         } else {
                             Text(
                                 "Status akan muncul setelah ${partner.name} terhubung.",
@@ -1232,11 +1319,17 @@ fun HomeScreenTab() {
                     else -> "-"
                 }
                 val watch = partner.watchBattery
+                // Angka baterai menghitung naik / turun, bukan loncat.
+                val shownBattery by animateIntAsState(
+                    targetValue = if (hasBattery) phone.percentage else 0,
+                    animationSpec = tween(700, easing = FastOutSlowInEasing),
+                    label = "batteryNumber"
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max)) {
                     StatTile(
                         icon = if (phone.isCharging) Icons.Outlined.BatteryChargingFull else Icons.Outlined.BatteryStd,
                         label = if (hasBattery && phone.isCharging) "Baterai HP, mengisi" else "Baterai HP",
-                        value = if (hasBattery) "${phone.percentage}%" else "-",
+                        value = if (hasBattery) "$shownBattery%" else "-",
                         tint = SidebyColors.TintMint,
                         iconColor = if (hasBattery) batteryColor else SidebyColors.TextMuted,
                         progress = if (hasBattery) phone.percentage / 100f else null,
@@ -1266,7 +1359,7 @@ fun HomeScreenTab() {
         }
 
         // ---- Foto ----
-        SectionCard {
+        SectionCard(index = 1) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Foto terbaru", fontFamily = FontFamily.Serif, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
                 TextButton(onClick = { showGalleryDialog = true }) {
@@ -1280,12 +1373,23 @@ fun HomeScreenTab() {
             Spacer(modifier = Modifier.height(8.dp))
 
             if (latestSnapshot != null && latestBitmap != null) {
+                // Foto baru "digantung" dan berayun beberapa kali sebelum diam miring tipis.
+                val swing = remember { Animatable(-8f) }
+                var photoTaps by remember { mutableIntStateOf(0) }
+                val photoWobble = rememberWobble(photoTaps)
+                LaunchedEffect(latestSnapshot.id) {
+                    swing.snapTo(-8f)
+                    swing.animateTo(-1.2f, spring(dampingRatio = 0.22f, stiffness = Spring.StiffnessVeryLow))
+                }
                 Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .graphicsLayer { rotationZ = -1.2f }
-                            .clickable { selectedFullPhoto = latestSnapshot },
+                            .graphicsLayer {
+                                rotationZ = swing.value + photoWobble * 0.4f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+                            }
+                            .bounceClick(pressedScale = 0.97f) { photoTaps++; selectedFullPhoto = latestSnapshot },
                         shape = RoundedCornerShape(4.dp),
                         color = Color.White,
                         border = BorderStroke(1.dp, SidebyColors.GlassBorder),
@@ -1350,7 +1454,7 @@ fun HomeScreenTab() {
             Spacer(modifier = Modifier.height(12.dp))
             Button(
                 onClick = { showPhotoSourceDialog = true },
-                modifier = Modifier.fillMaxWidth().height(46.dp),
+                modifier = Modifier.fillMaxWidth().height(46.dp).pressBounce(),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.TintRose, contentColor = SidebyColors.RosePrimary)
             ) {
@@ -1361,7 +1465,7 @@ fun HomeScreenTab() {
         }
 
         // ---- Status saya ----
-        SectionCard {
+        SectionCard(index = 2) {
             Text("Status kamu", fontFamily = FontFamily.Serif, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
             Spacer(modifier = Modifier.height(2.dp))
             Text("Yang kamu pilih di sini muncul di layar ${partner.name}.", fontSize = 13.sp, color = SidebyColors.TextMuted)
@@ -1372,7 +1476,13 @@ fun HomeScreenTab() {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Mood.entries.forEach { mood ->
+                    val chipScale by animateFloatAsState(
+                        targetValue = if (selectedMood == mood) 1.08f else 1f,
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMediumLow),
+                        label = "chipScale"
+                    )
                     FilterChip(
+                        modifier = Modifier.graphicsLayer { scaleX = chipScale; scaleY = chipScale },
                         selected = selectedMood == mood,
                         onClick = { selectedMood = mood },
                         label = { Text("${mood.emoji} ${mood.label}", fontSize = 13.sp) },
@@ -1412,6 +1522,8 @@ fun HomeScreenTab() {
             Spacer(modifier = Modifier.height(8.dp))
 
             val dirty = selectedMood != myStatus.mood || noteInput.trim() != myStatus.customNote
+            val burstHost = LocalHeartBurst.current
+            var saveCenter by remember { mutableStateOf(Offset.Zero) }
             Button(
                 onClick = {
                     isSaving = true
@@ -1427,6 +1539,7 @@ fun HomeScreenTab() {
                         val sent = CloudSyncManager.sendMyStatus(context)
                         SyncManager.sendPartnerStatusToWatch(context, MobileDataManager.getPartnerStatus(context))
                         isSaving = false
+                        if (sent) burstHost?.fire(saveCenter, 10)
                         Toast.makeText(
                             context,
                             if (sent) "Status terkirim" else "Status tersimpan, belum terkirim. Cek koneksi internet.",
@@ -1435,7 +1548,14 @@ fun HomeScreenTab() {
                     }
                 },
                 enabled = dirty && !isSaving,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .onGloballyPositioned {
+                        val pos = it.positionInRoot()
+                        saveCenter = Offset(pos.x + it.size.width / 2f, pos.y + it.size.height / 2f)
+                    }
+                    .pressBounce(),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SidebyColors.RosePrimary,
@@ -1807,16 +1927,46 @@ private fun ChatInputBar(
         )
         Spacer(modifier = Modifier.width(8.dp))
         val enabled = value.isNotBlank()
+        val sendScope = rememberCoroutineScope()
+        val fly = remember { Animatable(0f) }
+        // Tombol yang aktif membesar sedikit; saat ditekan pesawat kertasnya terbang keluar lalu muncul lagi.
+        val buttonScale by animateFloatAsState(
+            targetValue = if (enabled) 1f else 0.88f,
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+            label = "sendScale"
+        )
         Box(
             modifier = Modifier
                 .padding(bottom = 4.dp)
                 .size(48.dp)
+                .graphicsLayer { scaleX = buttonScale; scaleY = buttonScale }
                 .clip(CircleShape)
                 .background(if (enabled) SidebyColors.RosePrimary else SidebyColors.GlassBorder)
-                .clickable(enabled = enabled, onClick = onSend),
+                .then(
+                    if (enabled) Modifier.bounceClick(pressedScale = 0.86f) {
+                        onSend()
+                        sendScope.launch {
+                            fly.snapTo(0f)
+                            fly.animateTo(1f, tween(260, easing = FastOutSlowInEasing))
+                            fly.snapTo(-1f)
+                            fly.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium))
+                        }
+                    } else Modifier
+                ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Kirim", tint = Color.White, modifier = Modifier.size(22.dp))
+            Icon(
+                Icons.AutoMirrored.Filled.Send,
+                contentDescription = "Kirim",
+                tint = Color.White,
+                modifier = Modifier
+                    .size(22.dp)
+                    .graphicsLayer {
+                        translationX = fly.value * 30.dp.toPx()
+                        translationY = -fly.value * 30.dp.toPx()
+                        alpha = 1f - kotlin.math.abs(fly.value).coerceAtMost(1f) * 0.9f
+                    }
+            )
         }
     }
 }
@@ -1887,7 +2037,7 @@ fun ChatScreenTab() {
         if (messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = SidebyColors.TextSubtle, modifier = Modifier.size(40.dp))
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = SidebyColors.RosePrimary.copy(alpha = 0.6f), modifier = Modifier.size(44.dp).floating(amplitudeDp = 5f))
                     Spacer(modifier = Modifier.height(10.dp))
                     Text("Belum ada pesan", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SidebyColors.TextDeep)
                     Spacer(modifier = Modifier.height(4.dp))
@@ -1942,8 +2092,23 @@ fun ChatScreenTab() {
 @Composable
 private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?) {
     val bubbleShape = if (mine) RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
+    // Hanya pesan yang baru masuk (beberapa detik terakhir) yang "meletus" muncul dari sudut balonnya;
+    // riwayat lama tampil biasa supaya tidak heboh saat membuka chat.
+    val fresh = remember(msg.id) { System.currentTimeMillis() - msg.timestamp < 4_000L }
+    val pop = remember(msg.id) { Animatable(if (fresh) 0f else 1f) }
+    LaunchedEffect(msg.id) {
+        if (fresh) pop.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium))
+    }
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val p = pop.value
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
+                scaleX = 0.5f + 0.5f * p
+                scaleY = 0.5f + 0.5f * p
+                alpha = (p * 3f).coerceIn(0f, 1f)
+            },
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start
     ) {
         Surface(
@@ -2058,7 +2223,7 @@ fun RadarScreenTab() {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SectionCard {
+        SectionCard(index = 0) {
             Text("Jarak dengan ${partner.name}", fontSize = 13.sp, color = SidebyColors.TextMuted)
             Spacer(modifier = Modifier.height(4.dp))
             Text(headline, fontFamily = FontFamily.Serif, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
@@ -2066,7 +2231,7 @@ fun RadarScreenTab() {
             Text(detail, fontSize = 14.sp, color = SidebyColors.TextMuted, lineHeight = 20.sp)
         }
 
-        SectionCard {
+        SectionCard(index = 1) {
             Box(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
@@ -2084,6 +2249,8 @@ fun RadarScreenTab() {
                             drawCircle(color = SidebyColors.GlassBorder, radius = radius * it - 1f, style = Stroke(width = 2f))
                         }
                     }
+                    // Riak halus memancar dari posisimu, seperti sinyal yang mencari pasangan.
+                    RippleRings(color = SidebyColors.RosePrimary, modifier = Modifier.fillMaxSize())
                     if (partner.isConnected && partner.location.isNearby) {
                         Box(
                             modifier = Modifier
@@ -2094,7 +2261,7 @@ fun RadarScreenTab() {
                         )
                     }
                     Box(
-                        modifier = Modifier.size(40.dp).clip(CircleShape).background(SidebyColors.RosePrimary),
+                        modifier = Modifier.size(40.dp).heartbeat(2200).clip(CircleShape).background(SidebyColors.RosePrimary),
                         contentAlignment = Alignment.Center
                     ) {
                         Text("Kamu", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
@@ -2105,6 +2272,7 @@ fun RadarScreenTab() {
                                 .size(44.dp)
                                 .align(if (partner.location.isNearby) Alignment.BottomCenter else Alignment.TopEnd)
                                 .padding(if (partner.location.isNearby) 14.dp else 22.dp)
+                                .floating(amplitudeDp = 4f, periodMillis = 2200)
                                 .clip(CircleShape)
                                 .background(Color.White)
                                 .border(1.5.dp, SidebyColors.RosePrimary, CircleShape),
@@ -2123,7 +2291,7 @@ fun RadarScreenTab() {
             )
         }
 
-        SectionCard {
+        SectionCard(index = 2) {
             Text("Cara kerjanya", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SidebyColors.TextDeep)
             Spacer(modifier = Modifier.height(6.dp))
             Text(
