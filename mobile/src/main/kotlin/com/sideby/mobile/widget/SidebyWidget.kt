@@ -239,7 +239,14 @@ class SidebySnapshotWidget : GlanceAppWidget() {
                     .background(ColorProvider(Color(0xFFFFF0F5)))
                     .cornerRadius(20.dp)
                     .padding(10.dp)
-                    .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
+                    .clickable(
+                        // Ketuk foto locket = buka aplikasi langsung ke foto itu, layar penuh dan bisa di-zoom.
+                        actionStartActivity(
+                            Intent(context, MainActivity::class.java).apply {
+                                snapshot?.id?.let { putExtra(MainActivity.EXTRA_OPEN_PHOTO_ID, it) }
+                            }
+                        )
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {

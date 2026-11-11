@@ -241,6 +241,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_TAB = "open_tab"
+        const val EXTRA_OPEN_PHOTO_ID = "open_photo_id"
         const val TAB_CHAT = 1
     }
 
@@ -266,6 +267,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     SidebyMainApp(
                         initialTab = intent?.getIntExtra(EXTRA_OPEN_TAB, 0) ?: 0,
+                        initialPhotoId = intent?.getStringExtra(EXTRA_OPEN_PHOTO_ID),
                         onResetSetup = {
                             MobileDataManager.resetCurrentRoom(context)
                             SidebyBackgroundSyncService.stop(context)
@@ -729,6 +731,7 @@ fun DatePickerField(
 @Composable
 fun SidebyMainApp(
     initialTab: Int = 0,
+    initialPhotoId: String? = null,
     onResetSetup: () -> Unit
 ) {
     val context = LocalContext.current
@@ -744,6 +747,33 @@ fun SidebyMainApp(
         }
     }
     pendingUpdate?.let { UpdateDialog(it) { pendingUpdate = null } }
+
+    // Dibuka dari widget locket: tampilkan foto itu langsung, layar penuh.
+    var widgetPhotoId by remember { mutableStateOf(initialPhotoId) }
+    widgetPhotoId?.let { id ->
+        val loaded by produceState<Triple<List<DailySnapshot>, List<ChatMessage>, Boolean>>(
+            initialValue = Triple(emptyList(), emptyList(), false), id
+        ) {
+            value = withContext(Dispatchers.IO) {
+                Triple(MobileDataManager.getSnapshotGallery(context), MobileDataManager.getChatMessages(context), true)
+            }
+        }
+        val (gallery, chat, ready) = loaded
+        val snap = gallery.firstOrNull { it.id == id }
+            ?: MobileDataManager.getMyStatus(context).snapshot?.takeIf { it.id == id }
+            ?: MobileDataManager.getPartnerStatus(context).snapshot?.takeIf { it.id == id }
+        if (snap != null) {
+            PhotoViewerDialog(
+                photo = snap,
+                gallery = gallery,
+                chat = chat,
+                partnerName = remember { MobileDataManager.getPartnerStatus(context).name },
+                onDismiss = { widgetPhotoId = null }
+            )
+        } else if (ready) {
+            widgetPhotoId = null
+        }
+    }
 
     LaunchedEffect(currentTab) {
         var lastVersion = -1L
@@ -942,7 +972,7 @@ fun SidebyMainApp(
 
 /** Dekode gambar di luar main thread, dan hanya ulang bila isi gambarnya berubah. */
 @Composable
-private fun rememberBitmap(base64: String?): ImageBitmap? {
+internal fun rememberBitmap(base64: String?): ImageBitmap? {
     val state = produceState<ImageBitmap?>(initialValue = null, base64) {
         value = if (base64.isNullOrBlank()) null
         else withContext(Dispatchers.Default) { decodeBase64ToBitmap(base64) }
@@ -1662,97 +1692,15 @@ fun HomeScreenTab() {
 
     }
 
-    // ---- Foto penuh + komentar ----
+    // ---- Foto layar penuh (zoom) + komentar ----
     selectedFullPhoto?.let { photo ->
-        val live = galleryList.firstOrNull { it.id == photo.id } ?: photo
-        val fullBmp = rememberBitmap(live.imageBase64)
-        val myId = remember { MobileDataManager.getMyDeviceId(context) }
-        val comments = chatMessages.filter { it.photoId == live.id }.sortedBy { it.timestamp }
-        var commentInput by remember(photo.id) { mutableStateOf("") }
-
-        Dialog(
-            onDismissRequest = { selectedFullPhoto = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(0.94f).heightIn(max = 680.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = Color.White
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("id", "ID")).format(Date(live.timestamp)),
-                            color = SidebyColors.TextMuted,
-                            fontSize = 13.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { selectedFullPhoto = null }) {
-                            Icon(Icons.Default.Close, contentDescription = "Tutup", tint = SidebyColors.TextDeep)
-                        }
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 180.dp, max = 380.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(SidebyColors.DelicatePink),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (fullBmp != null) {
-                                Image(bitmap = fullBmp, contentDescription = "Foto", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.Fit)
-                            } else {
-                                CircularProgressIndicator(color = SidebyColors.RosePrimary, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
-                            }
-                        }
-                        if (live.caption.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(live.caption, color = SidebyColors.TextDeep, fontSize = 14.sp)
-                        }
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Text("Komentar (${comments.size})", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = SidebyColors.TextDeep)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        if (comments.isEmpty()) {
-                            Text("Belum ada komentar. Tulis yang pertama.", fontSize = 13.sp, color = SidebyColors.TextMuted)
-                        }
-                        comments.forEach { c ->
-                            val mine = c.senderId == myId
-                            Column(modifier = Modifier.padding(vertical = 5.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (mine) "Kamu" else c.senderName.ifBlank { partner.name },
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (mine) SidebyColors.RosePrimary else SidebyColors.TextDeep
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        if (c.pending) "belum terkirim" else SimpleDateFormat("dd MMM, HH:mm", Locale("id", "ID")).format(Date(c.timestamp)),
-                                        fontSize = 11.sp,
-                                        color = if (c.pending) SidebyColors.BatteryWarn else SidebyColors.TextSubtle
-                                    )
-                                }
-                                Text(c.text, fontSize = 14.sp, color = SidebyColors.TextDeep, lineHeight = 20.sp)
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    ChatInputBar(
-                        value = commentInput,
-                        onValueChange = { commentInput = it },
-                        placeholder = "Tulis komentar...",
-                        onSend = {
-                            val text = commentInput
-                            commentInput = ""
-                            coroutineScope.launch { sendChatMessage(context, text, live.id) }
-                        }
-                    )
-                }
-            }
-        }
+        PhotoViewerDialog(
+            photo = photo,
+            gallery = galleryList,
+            chat = chatMessages,
+            partnerName = partner.name,
+            onDismiss = { selectedFullPhoto = null }
+        )
     }
 }
 
@@ -1886,7 +1834,7 @@ private fun UpdateCard() {
 // ==========================================
 // CHAT
 // ==========================================
-private suspend fun sendChatMessage(context: Context, text: String, photoId: String?) {
+internal suspend fun sendChatMessage(context: Context, text: String, photoId: String?) {
     val clean = text.trim().take(ChatMessage.MAX_TEXT_LENGTH)
     if (clean.isBlank()) return
     val me = MobileDataManager.getMyStatus(context)
@@ -1903,7 +1851,7 @@ private suspend fun sendChatMessage(context: Context, text: String, photoId: Str
 }
 
 @Composable
-private fun ChatInputBar(
+internal fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
@@ -1981,6 +1929,7 @@ fun ChatScreenTab() {
     var messages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var photos by remember { mutableStateOf<List<DailySnapshot>>(emptyList()) }
     var input by remember { mutableStateOf("") }
+    var openedPhoto by remember { mutableStateOf<DailySnapshot?>(null) }
     val listState = rememberLazyListState()
 
     // "Chat terbuka" hanya benar saat layar benar-benar terlihat (RESUMED). Jika kamu menekan Home / mengunci
@@ -2033,6 +1982,16 @@ fun ChatScreenTab() {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
+    openedPhoto?.let { p ->
+        PhotoViewerDialog(
+            photo = p,
+            gallery = photos,
+            chat = messages,
+            partnerName = partnerName,
+            onDismiss = { openedPhoto = null }
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         if (messages.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -2067,7 +2026,13 @@ fun ChatScreenTab() {
                             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                         )
                     }
-                    ChatBubble(msg = msg, mine = msg.senderId == myId, photo = msg.photoId?.let { id -> photos.firstOrNull { it.id == id } })
+                    val bubblePhoto = msg.photoId?.let { id -> photos.firstOrNull { it.id == id } }
+                    ChatBubble(
+                        msg = msg,
+                        mine = msg.senderId == myId,
+                        photo = bubblePhoto,
+                        onPhotoClick = { bubblePhoto?.let { openedPhoto = it } }
+                    )
                 }
             }
         }
@@ -2090,7 +2055,7 @@ fun ChatScreenTab() {
 }
 
 @Composable
-private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?) {
+private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, onPhotoClick: () -> Unit = {}) {
     val bubbleShape = if (mine) RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
     // Hanya pesan yang baru masuk (beberapa detik terakhir) yang "meletus" muncul dari sudut balonnya;
     // riwayat lama tampil biasa supaya tidak heboh saat membuka chat.
@@ -2125,7 +2090,8 @@ private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?) {
                             .fillMaxWidth()
                             .height(110.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(if (mine) Color.White.copy(alpha = 0.2f) else SidebyColors.DelicatePink),
+                            .background(if (mine) Color.White.copy(alpha = 0.2f) else SidebyColors.DelicatePink)
+                            .clickable(enabled = photo != null, onClick = onPhotoClick),
                         contentAlignment = Alignment.Center
                     ) {
                         if (bmp != null) {
@@ -2963,7 +2929,7 @@ private suspend fun encodeImageUriToBase64(context: Context, uri: Uri): String? 
         }
 
         // 4. Ubah ukuran secara proporsional (max dimensi 800px) agar gambar tajam dan file tetap ringan
-        val maxDimension = 800
+        val maxDimension = 1280
         val width = orientedBitmap.width
         val height = orientedBitmap.height
         val scale = if (width > height) {
