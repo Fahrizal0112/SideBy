@@ -7,6 +7,21 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import android.Manifest
+import android.content.ContentValues
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.material.icons.filled.Download
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -174,6 +189,36 @@ fun PhotoViewerDialog(
     var commentInput by remember(photo.id) { mutableStateOf("") }
     var zoomed by remember(photo.id) { mutableStateOf(false) }
 
+    // Simpan ke galeri HP (folder Pictures/Sideby). Android 9 ke bawah butuh izin penyimpanan; 10 ke atas tidak.
+    val doSave: () -> Unit = {
+        val b64 = live.imageBase64
+        if (b64.isNullOrBlank()) {
+            Toast.makeText(context, "Foto belum selesai diunduh", Toast.LENGTH_SHORT).show()
+        } else {
+            scope.launch {
+                val ok = savePhotoToGallery(context, b64, live.timestamp)
+                Toast.makeText(
+                    context,
+                    if (ok) "Foto disimpan di galeri (album Sideby)" else "Foto gagal disimpan",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+    val storagePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) doSave()
+        else Toast.makeText(context, "Izin penyimpanan diperlukan untuk menyimpan foto", Toast.LENGTH_SHORT).show()
+    }
+    val save: () -> Unit = {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            doSave()
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -199,6 +244,9 @@ fun PhotoViewerDialog(
                         color = Color.White.copy(alpha = 0.65f),
                         fontSize = 12.sp
                     )
+                }
+                IconButton(onClick = save) {
+                    Icon(Icons.Filled.Download, contentDescription = "Simpan ke galeri", tint = Color.White)
                 }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, contentDescription = "Tutup", tint = Color.White)
@@ -281,3 +329,40 @@ fun PhotoViewerDialog(
         }
     }
 }
+
+/** Menulis foto (yang sudah berformat JPEG) apa adanya ke galeri lewat MediaStore, tanpa kompresi ulang. */
+private suspend fun savePhotoToGallery(context: Context, base64: String, timestamp: Long): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            if (bytes.isEmpty()) return@withContext false
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(if (timestamp > 0L) timestamp else System.currentTimeMillis()))
+            val name = "Sideby_$stamp.jpg"
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Sideby")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext false
+            val written = try {
+                resolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+            } catch (e: Exception) {
+                false
+            }
+            if (!written) {
+                resolver.delete(uri, null, null)
+                return@withContext false
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                resolver.update(uri, done, null, null)
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
