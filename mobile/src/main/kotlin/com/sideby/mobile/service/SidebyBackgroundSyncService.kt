@@ -102,6 +102,10 @@ class SidebyBackgroundSyncService : Service() {
                         serviceScope.launch { CloudSyncManager.flushPendingSnapshots(applicationContext, wait = false) }
                     }
 
+                    if (MobileDataManager.getPendingReactions(applicationContext).isNotEmpty()) {
+                        serviceScope.launch { CloudSyncManager.flushPendingReactions(applicationContext, wait = false) }
+                    }
+
                     if (MobileDataManager.getPendingChatMessages(applicationContext).isNotEmpty()) {
                         serviceScope.launch { CloudSyncManager.flushPendingChats(applicationContext, wait = false) }
                     }

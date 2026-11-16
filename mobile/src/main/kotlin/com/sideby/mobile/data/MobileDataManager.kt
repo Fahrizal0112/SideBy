@@ -32,6 +32,7 @@ object MobileDataManager {
     private const val KEY_ACTIVE_TOGETHER_START = "key_active_together_start"
     private const val KEY_PENDING_SNAPSHOTS = "key_pending_snapshots"
     private const val KEY_CHAT = "key_chat_messages"
+    private const val KEY_REACTIONS = "key_photo_reactions"
     private const val KEY_CHAT_LAST_READ = "key_chat_last_read"
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -516,6 +517,49 @@ object MobileDataManager {
             saveChatMessages(context, cur.map { if (it.id == id) transform(it) else it })
         }
     }
+
+    // ==========================================
+    // REAKSI FOTO
+    // ==========================================
+    /** Id foto yang sedang dibuka layar penuh; reaksi pasangan pada foto ini tidak perlu notifikasi. */
+    @Volatile var viewingPhotoId: String? = null
+
+    fun getPhotoReactions(context: Context): List<PhotoReaction> {
+        val raw = prefs(context).getString(getRoomKey(context, KEY_REACTIONS), null) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<PhotoReaction>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Simpan reaksi bila lebih baru dari yang sudah ada untuk (foto, pengirim) yang sama.
+     * @return true bila ada yang berubah (reaksi baru / diganti / dicabut).
+     */
+    fun setPhotoReaction(context: Context, r: PhotoReaction): Boolean = synchronized(statusLock) {
+        val cur = getPhotoReactions(context)
+        val existing = cur.firstOrNull { it.photoId == r.photoId && it.senderId == r.senderId }
+        if (existing != null && existing.timestamp >= r.timestamp) return@synchronized false
+        val next = (cur.filterNot { it.photoId == r.photoId && it.senderId == r.senderId } + r).takeLast(600)
+        prefs(context).edit().putString(getRoomKey(context, KEY_REACTIONS), json.encodeToString(next)).apply()
+        dataVersionCounter.incrementAndGet()
+        existing?.emoji != r.emoji
+    }
+
+    fun markReactionSent(context: Context, r: PhotoReaction) = synchronized(statusLock) {
+        val cur = getPhotoReactions(context)
+        if (cur.any { it.photoId == r.photoId && it.senderId == r.senderId && it.timestamp == r.timestamp && it.pending }) {
+            val next = cur.map {
+                if (it.photoId == r.photoId && it.senderId == r.senderId && it.timestamp == r.timestamp) it.copy(pending = false) else it
+            }
+            prefs(context).edit().putString(getRoomKey(context, KEY_REACTIONS), json.encodeToString(next)).apply()
+            dataVersionCounter.incrementAndGet()
+        }
+    }
+
+    fun getPendingReactions(context: Context): List<PhotoReaction> =
+        getPhotoReactions(context).filter { it.pending }.sortedBy { it.timestamp }
 
     fun markChatMessageSent(context: Context, id: String) = synchronized(statusLock) {
         val cur = getChatMessages(context)

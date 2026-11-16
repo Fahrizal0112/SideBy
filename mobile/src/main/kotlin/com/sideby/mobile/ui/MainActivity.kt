@@ -2,6 +2,7 @@ package com.sideby.mobile.ui
 
 import android.app.DatePickerDialog
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -169,6 +170,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.TextButton
 import kotlin.random.Random
 import com.sideby.mobile.data.ChatMessage
+import com.sideby.mobile.data.PhotoReaction
 import com.sideby.mobile.update.UpdateInfo
 import com.sideby.mobile.update.UpdateManager
 import androidx.compose.material3.LinearProgressIndicator
@@ -245,7 +247,21 @@ object SidebyColors {
     val HeroCardBrush = Brush.linearGradient(listOf(Color.White, Color.White))
 }
 
+/** Permintaan buka tab / foto dari notifikasi atau widget saat aplikasi sudah terbuka. */
+data class NavRequest(val serial: Int, val tab: Int?, val photoId: String?)
+
 class MainActivity : ComponentActivity() {
+
+    private val navRequest = mutableStateOf<NavRequest?>(null)
+    private var navSerial = 0
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val photo = intent.getStringExtra(EXTRA_OPEN_PHOTO_ID)
+        val tab = if (intent.hasExtra(EXTRA_OPEN_TAB)) intent.getIntExtra(EXTRA_OPEN_TAB, 0) else null
+        if (photo != null || tab != null) navRequest.value = NavRequest(++navSerial, tab, photo)
+    }
 
     companion object {
         const val EXTRA_OPEN_TAB = "open_tab"
@@ -276,6 +292,7 @@ class MainActivity : ComponentActivity() {
                     SidebyMainApp(
                         initialTab = intent?.getIntExtra(EXTRA_OPEN_TAB, 0) ?: 0,
                         initialPhotoId = intent?.getStringExtra(EXTRA_OPEN_PHOTO_ID),
+                        navRequest = navRequest.value,
                         onResetSetup = {
                             MobileDataManager.resetCurrentRoom(context)
                             SidebyBackgroundSyncService.stop(context)
@@ -740,6 +757,7 @@ fun DatePickerField(
 fun SidebyMainApp(
     initialTab: Int = 0,
     initialPhotoId: String? = null,
+    navRequest: NavRequest? = null,
     onResetSetup: () -> Unit
 ) {
     val context = LocalContext.current
@@ -758,6 +776,12 @@ fun SidebyMainApp(
 
     // Dibuka dari widget locket: tampilkan foto itu langsung, layar penuh.
     var widgetPhotoId by remember { mutableStateOf(initialPhotoId) }
+    LaunchedEffect(navRequest?.serial) {
+        navRequest?.let {
+            it.tab?.let { t -> currentTab = t }
+            it.photoId?.let { id -> widgetPhotoId = id }
+        }
+    }
     widgetPhotoId?.let { id ->
         val loaded by produceState<Triple<List<DailySnapshot>, List<ChatMessage>, Boolean>>(
             initialValue = Triple(emptyList(), emptyList(), false), id
@@ -1081,6 +1105,7 @@ fun HomeScreenTab() {
     var showGalleryDialog by remember { mutableStateOf(false) }
     var selectedFullPhoto by remember { mutableStateOf<DailySnapshot?>(null) }
     var chatMessages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
+    var reactions by remember { mutableStateOf<List<PhotoReaction>>(emptyList()) }
     var showPhotoSourceDialog by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
 
@@ -1102,6 +1127,8 @@ fun HomeScreenTab() {
                 }
                 val chat = withContext(Dispatchers.IO) { MobileDataManager.getChatMessages(context) }
                 if (chatMessages != chat) chatMessages = chat
+                val rx = withContext(Dispatchers.IO) { MobileDataManager.getPhotoReactions(context) }
+                if (reactions != rx) reactions = rx
                 val pend = MobileDataManager.getPendingSnapshotIds(context)
                 if (pendingIds != pend) pendingIds = pend
                 if (partner != p) partner = p
@@ -1458,14 +1485,38 @@ fun HomeScreenTab() {
                     }
                 }
                 val commentCount = chatMessages.count { it.photoId == latestSnapshot.id }
-                TextButton(onClick = { selectedFullPhoto = latestSnapshot }, modifier = Modifier.padding(top = 2.dp)) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = SidebyColors.RosePrimary)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        if (commentCount > 0) "$commentCount komentar" else "Balas foto ini",
-                        color = SidebyColors.RosePrimary,
-                        fontSize = 13.sp
-                    )
+                val photoReactions = reactions.filter { it.photoId == latestSnapshot.id && it.emoji.isNotBlank() }
+                val myDeviceId = remember { MobileDataManager.getMyDeviceId(context) }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                    TextButton(onClick = { selectedFullPhoto = latestSnapshot }) {
+                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = SidebyColors.RosePrimary)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            if (commentCount > 0) "$commentCount komentar" else "Balas foto ini",
+                            color = SidebyColors.RosePrimary,
+                            fontSize = 13.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    // Siapa bereaksi apa, tampil langsung di bawah foto.
+                    photoReactions.forEach { r ->
+                        androidx.compose.runtime.key(r.senderId, r.emoji) {
+                            val pop = remember { Animatable(0.3f) }
+                            LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMedium)) }
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                color = SidebyColors.TintRose,
+                                modifier = Modifier.padding(start = 6.dp).graphicsLayer { scaleX = pop.value; scaleY = pop.value }
+                            ) {
+                                Text(
+                                    "${r.emoji} ${if (r.senderId == myDeviceId) "Kamu" else r.senderName.ifBlank { partner.name }}",
+                                    fontSize = 12.sp,
+                                    color = SidebyColors.TextDeep,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             } else if (latestSnapshot != null) {
                 Box(
@@ -1692,6 +1743,16 @@ fun HomeScreenTab() {
                                     } else {
                                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
                                     }
+                                    val badge = reactions.filter { it.photoId == item.id && it.emoji.isNotBlank() }.joinToString("") { it.emoji }
+                                    if (badge.isNotEmpty()) {
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = Color.White.copy(alpha = 0.9f),
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                                        ) {
+                                            Text(badge, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1858,6 +1919,23 @@ internal suspend fun sendChatMessage(context: Context, text: String, photoId: St
     // Simpan lokal dulu (langsung tampil), lalu kirim; jika gagal, service mencoba lagi otomatis.
     withContext(Dispatchers.IO) { MobileDataManager.addChatMessage(context, msg) }
     CloudSyncManager.flushPendingChats(context, wait = true)
+}
+
+/** Pasang / ganti / cabut (ketuk reaksi yang sama lagi) reaksiku pada foto, lalu kirim ke pasangan. */
+internal suspend fun setMyReaction(context: Context, photoId: String, emoji: String) {
+    val myId = MobileDataManager.getMyDeviceId(context)
+    val name = MobileDataManager.getMyStatus(context).name
+    withContext(Dispatchers.IO) {
+        val existing = MobileDataManager.getPhotoReactions(context).firstOrNull { it.photoId == photoId && it.senderId == myId }
+        val next = if (existing?.emoji == emoji) "" else emoji
+        // Penanda waktu harus lebih besar dari yang lama agar reaksi baru selalu menang di kedua HP.
+        val stamp = maxOf(System.currentTimeMillis(), (existing?.timestamp ?: 0L) + 1)
+        MobileDataManager.setPhotoReaction(
+            context,
+            PhotoReaction(photoId = photoId, senderId = myId, senderName = name, emoji = next, timestamp = stamp, pending = true)
+        )
+    }
+    CloudSyncManager.flushPendingReactions(context, wait = true)
 }
 
 /** Simpan rekaman lalu kirim. Gagal terkirim = tetap di antrean dan dicoba lagi otomatis, seperti chat biasa. */

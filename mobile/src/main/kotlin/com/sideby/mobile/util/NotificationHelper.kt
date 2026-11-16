@@ -157,11 +157,12 @@ object NotificationHelper {
         manager.notify(NOTIFICATION_ID_TOGETHER, notification)
     }
 
-    fun showChatNotification(context: Context, partnerName: String, text: String, isPhotoComment: Boolean) {
+    fun showChatNotification(context: Context, partnerName: String, text: String, isPhotoComment: Boolean, photoId: String? = null) {
         createNotificationChannel(context)
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(MainActivity.EXTRA_OPEN_TAB, MainActivity.TAB_CHAT)
+            if (photoId != null) putExtra(MainActivity.EXTRA_OPEN_PHOTO_ID, photoId)
+            else putExtra(MainActivity.EXTRA_OPEN_TAB, MainActivity.TAB_CHAT)
         }
         val pendingIntent = PendingIntent.getActivity(
             context, NOTIFICATION_ID_CHAT, intent,

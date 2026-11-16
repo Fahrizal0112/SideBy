@@ -41,7 +41,7 @@ import java.util.UUID
 
 @Serializable
 data class SyncPayload(
-    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT"
+    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT", "REACT"
     val senderRole: String = "", // "CREATOR" or "PARTNER"
     val senderId: String = "", // Device UUID to avoid self-echo
     val configData: CoupleRoomConfig? = null,
@@ -49,6 +49,7 @@ data class SyncPayload(
     val pokeData: PokeMessage? = null,
     val snapshotData: DailySnapshot? = null,
     val chatData: com.sideby.mobile.data.ChatMessage? = null,
+    val reactData: com.sideby.mobile.data.PhotoReaction? = null,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -415,6 +416,29 @@ object CloudSyncManager {
         )
     }
 
+    /** Kirim satu reaksi foto. Sukses bila relay menerima. */
+    suspend fun sendReaction(context: Context, r: com.sideby.mobile.data.PhotoReaction): Boolean = withContext(Dispatchers.IO) {
+        val role = if (MobileDataManager.isCreator(context)) "CREATOR" else "PARTNER"
+        sendToRelay(
+            MobileDataManager.getRoomCode(context),
+            SyncPayload(type = "REACT", senderRole = role, senderId = MobileDataManager.getMyDeviceId(context), reactData = r.copy(pending = false))
+        )
+    }
+
+    private val reactFlushMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Kirim ulang reaksi yang tertunda, berurutan; berhenti di yang pertama gagal. */
+    suspend fun flushPendingReactions(context: Context, wait: Boolean = false) = withContext(Dispatchers.IO) {
+        if (wait) reactFlushMutex.lock() else if (!reactFlushMutex.tryLock()) return@withContext
+        try {
+            for (r in MobileDataManager.getPendingReactions(context)) {
+                if (sendReaction(context, r)) MobileDataManager.markReactionSent(context, r) else break
+            }
+        } finally {
+            reactFlushMutex.unlock()
+        }
+    }
+
     private val chatFlushMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Kirim ulang pesan chat yang tertunda, berurutan; berhenti di pesan pertama yang gagal. */
@@ -778,6 +802,26 @@ object CloudSyncManager {
                                         com.sideby.mobile.util.VoiceNotes.ensureLocal(context, msg)
                                     }
                                 }
+                            }
+                        }
+                    }
+                    "REACT" -> {
+                        payload.reactData?.let { incoming ->
+                            if (incoming.photoId.isBlank() || incoming.senderId == myDeviceId) return@let
+                            val r = incoming.copy(pending = false)
+                            if (MobileDataManager.setPhotoReaction(context, r) && r.emoji.isNotBlank() &&
+                                MobileDataManager.viewingPhotoId != r.photoId
+                            ) {
+                                val name = MobileDataManager.getPartnerStatus(context).name
+                                val myName = MobileDataManager.getMyStatus(context).name
+                                val ownPhoto = MobileDataManager.getSnapshotGallery(context)
+                                    .firstOrNull { it.id == r.photoId }?.senderName == myName
+                                NotificationHelper.showChatNotification(
+                                    context, name,
+                                    "bereaksi ${r.emoji} pada ${if (ownPhoto) "fotomu" else "foto"}",
+                                    isPhotoComment = false,
+                                    photoId = r.photoId
+                                )
                             }
                         }
                     }

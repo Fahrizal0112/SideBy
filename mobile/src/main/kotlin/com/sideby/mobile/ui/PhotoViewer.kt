@@ -22,6 +22,25 @@ import androidx.core.content.ContextCompat
 import androidx.compose.material.icons.filled.Download
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import com.sideby.mobile.data.PhotoReaction
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -189,6 +208,37 @@ fun PhotoViewerDialog(
     var commentInput by remember(photo.id) { mutableStateOf("") }
     var zoomed by remember(photo.id) { mutableStateOf(false) }
 
+    // ---- Reaksi ----
+    var reactions by remember(photo.id) { mutableStateOf<List<PhotoReaction>>(emptyList()) }
+    var rise by remember(photo.id) { mutableStateOf<Pair<String, Int>?>(null) }
+    var riseCounter by remember(photo.id) { mutableIntStateOf(0) }
+    val openedAt = remember(photo.id) { System.currentTimeMillis() }
+    DisposableEffect(photo.id) {
+        MobileDataManager.viewingPhotoId = photo.id
+        onDispose { if (MobileDataManager.viewingPhotoId == photo.id) MobileDataManager.viewingPhotoId = null }
+    }
+    LaunchedEffect(photo.id) {
+        var lastVersion = -1L
+        var lastPartnerStamp = 0L
+        while (true) {
+            val v = MobileDataManager.dataVersion()
+            if (v != lastVersion) {
+                lastVersion = v
+                val all = withContext(Dispatchers.IO) { MobileDataManager.getPhotoReactions(context) }
+                reactions = all.filter { it.photoId == photo.id }
+                // Pasangan bereaksi saat foto ini sedang dibuka: emojinya melayang di atas foto.
+                val pr = reactions.firstOrNull { it.senderId != myId && it.emoji.isNotBlank() }
+                if (pr != null && pr.timestamp > openedAt && pr.timestamp != lastPartnerStamp) {
+                    lastPartnerStamp = pr.timestamp
+                    rise = pr.emoji to ++riseCounter
+                }
+            }
+            delay(600)
+        }
+    }
+    val myReaction = reactions.firstOrNull { it.senderId == myId }?.emoji.orEmpty()
+    val partnerReaction = reactions.firstOrNull { it.senderId != myId && it.emoji.isNotBlank() }
+
     // Simpan ke galeri HP (folder Pictures/Sideby). Android 9 ke bawah butuh izin penyimpanan; 10 ke atas tidak.
     val doSave: () -> Unit = {
         val b64 = live.imageBase64
@@ -259,6 +309,7 @@ fun PhotoViewerDialog(
                 } else {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
                 }
+                rise?.let { (e, k) -> RiseEmoji(emoji = e, serial = k, modifier = Modifier.align(Alignment.Center)) }
                 if (bitmap != null && !zoomed) {
                     Text(
                         "Cubit atau ketuk dua kali untuk memperbesar",
@@ -280,6 +331,61 @@ fun PhotoViewerDialog(
                         .background(Color.White, androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                         .padding(14.dp)
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PhotoReaction.CHOICES.forEach { e ->
+                            val selected = myReaction == e
+                            val scale by animateFloatAsState(
+                                targetValue = if (selected) 1.2f else 1f,
+                                animationSpec = androidx.compose.animation.core.spring(
+                                    dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMediumLow
+                                ),
+                                label = "reactScale"
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .graphicsLayer { scaleX = scale; scaleY = scale }
+                                    .clip(CircleShape)
+                                    .background(if (selected) SidebyColors.TintRose else SidebyColors.DelicatePink)
+                                    .then(if (selected) Modifier.border(1.5.dp, SidebyColors.RosePrimary, CircleShape) else Modifier)
+                                    .bounceClick(pressedScale = 0.8f) {
+                                        if (!selected) rise = e to ++riseCounter
+                                        scope.launch { setMyReaction(context, live.id, e) }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(e, fontSize = 22.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        // Reaksi pasangan: berganti dengan efek pantul.
+                        AnimatedContent(
+                            targetState = partnerReaction?.emoji.orEmpty(),
+                            transitionSpec = {
+                                scaleIn(androidx.compose.animation.core.spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessLow)) togetherWith scaleOut(tween(120))
+                            },
+                            label = "partnerReaction"
+                        ) { e ->
+                            if (e.isNotEmpty()) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(e, fontSize = 26.sp)
+                                    Text(
+                                        partnerReaction?.senderName?.ifBlank { null } ?: partnerName,
+                                        fontSize = 10.sp,
+                                        color = SidebyColors.TextMuted,
+                                        maxLines = 1
+                                    )
+                                }
+                            } else {
+                                Spacer(modifier = Modifier.size(1.dp))
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         "Komentar (${comments.size})",
                         fontFamily = FontFamily.Serif,
@@ -366,3 +472,25 @@ private suspend fun savePhotoToGallery(context: Context, base64: String, timesta
             false
         }
     }
+
+/** Emoji besar yang membesar dengan pantulan lalu melayang naik dan memudar di atas foto. */
+@Composable
+private fun RiseEmoji(emoji: String, serial: Int, modifier: Modifier = Modifier) {
+    val p = remember(serial) { Animatable(0f) }
+    LaunchedEffect(serial) { p.animateTo(1f, tween(1300, easing = LinearEasing)) }
+    val t = p.value
+    if (t > 0.001f && t < 0.999f) {
+        Text(
+            emoji,
+            fontSize = 72.sp,
+            modifier = modifier.graphicsLayer {
+                val pop = (t / 0.25f).coerceIn(0f, 1f)
+                val s = 0.3f + 0.7f * pop + 0.2f * kotlin.math.sin(pop * Math.PI.toFloat())
+                scaleX = s
+                scaleY = s
+                translationY = -t * 160.dp.toPx()
+                alpha = 1f - ((t - 0.55f) / 0.45f).coerceIn(0f, 1f)
+            }
+        )
+    }
+}
