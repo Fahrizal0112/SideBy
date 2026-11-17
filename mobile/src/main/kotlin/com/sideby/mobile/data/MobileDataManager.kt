@@ -1,6 +1,7 @@
 package com.sideby.mobile.data
 
 import android.content.Context
+import com.sideby.mobile.util.PhotoStore
 import android.content.SharedPreferences
 import com.sideby.shared.model.BatteryStatus
 import com.sideby.shared.model.CoupleRoomConfig
@@ -420,7 +421,7 @@ object MobileDataManager {
         // Pulihkan URL jika ada entri sebelumnya yang sempat kehilangan URL
         for (i in list.indices) {
             val item = list[i]
-            if (item.imageBase64.isNullOrBlank() && item.imageUrl.isNullOrBlank()) {
+            if (!PhotoStore.hasImage(context, item)) {
                 if (item.id == "32f0a07f-a925-40cb-98cc-b5ccec24c6ff") {
                     list[i] = item.copy(imageUrl = "https://h.uguu.se/HrZZwWHG.jpg")
                 } else if (item.id == "c2937107-e0b0-4ac3-a344-681176d0ef7e") {
@@ -429,8 +430,8 @@ object MobileDataManager {
             }
         }
 
-        // Hapus entri cacat yang benar-benar tidak memiliki gambar dan tidak memiliki url
-        list.removeAll { it.imageBase64.isNullOrBlank() && it.imageUrl.isNullOrBlank() }
+        // Hapus entri cacat yang benar-benar tidak memiliki gambar, url, maupun berkas di HP
+        list.removeAll { !PhotoStore.hasImage(context, it) }
 
         // Sinkronkan snapshot dari myStatus jika ada
         val mySnap = getMyStatus(context).snapshot
@@ -476,8 +477,11 @@ object MobileDataManager {
     }
 
     fun saveSnapshotGallery(context: Context, list: List<DailySnapshot>) {
-        val valid = list.filter { !it.imageBase64.isNullOrBlank() || !it.imageUrl.isNullOrBlank() }
+        // Gambar disimpan sebagai berkas; daftar di preferensi hanya berisi data ringan (tanpa base64).
+        list.forEach { PhotoStore.saveBase64IfMissing(context, it.id, it.imageBase64) }
+        val valid = list.filter { PhotoStore.hasImage(context, it) }
             .sortedByDescending { it.timestamp }
+            .map { if (it.imageBase64 != null) it.copy(imageBase64 = null) else it }
         val raw = json.encodeToString(valid)
         prefs(context).edit().putString(getRoomKey(context, KEY_SNAPSHOT_GALLERY), raw).apply()
         dataVersionCounter.incrementAndGet()
@@ -652,7 +656,7 @@ object MobileDataManager {
 
     fun addSnapshotToGallery(context: Context, snapshot: DailySnapshot) {
         // Jangan simpan snapshot kosong tanpa gambar
-        if (snapshot.imageBase64.isNullOrBlank() && snapshot.imageUrl.isNullOrBlank()) {
+        if (!PhotoStore.hasImage(context, snapshot)) {
             return
         }
 
@@ -698,8 +702,17 @@ object MobileDataManager {
         // SELALU URUTKAN DARI TERBARU KE TERLAMA (DESCENDING)
         current.sortByDescending { it.timestamp }
 
-        // Simpan maksimal 60 foto terbaru agar hemat memori
-        val limited = if (current.size > 60) current.take(60) else current
-        saveSnapshotGallery(context, limited)
+        // Tidak ada batas jumlah foto: gambarnya di berkas, bukan di memori / preferensi.
+        saveSnapshotGallery(context, current)
+    }
+
+    /**
+     * Pindahkan foto lama (yang dulu disimpan sebagai teks base64 di preferensi, maksimal 60) ke berkas.
+     * Aman dipanggil berulang; tidak melakukan apa-apa bila semuanya sudah berupa berkas.
+     */
+    fun migrateGalleryToFiles(context: Context) = synchronized(statusLock) {
+        val raw = prefs(context).getString(getRoomKey(context, KEY_SNAPSHOT_GALLERY), null) ?: return@synchronized
+        if (!raw.contains("\"imageBase64\":\"")) return@synchronized
+        saveSnapshotGallery(context, getSnapshotGallery(context))
     }
 }

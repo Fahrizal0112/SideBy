@@ -381,11 +381,8 @@ object CloudSyncManager {
 
         var remoteUrl = snapshot.imageUrl
         if (remoteUrl.isNullOrBlank()) {
-            val bytes = try {
-                android.util.Base64.decode(snapshot.imageBase64 ?: "", android.util.Base64.DEFAULT)
-            } catch (e: Exception) {
-                ByteArray(0)
-            }
+            // Foto yang mengantre disimpan sebagai berkas; isi base64 hanya ada pada foto yang baru diambil.
+            val bytes = com.sideby.mobile.util.PhotoStore.bytesFor(context, snapshot) ?: ByteArray(0)
             if (bytes.isEmpty()) return@withContext false
             remoteUrl = uploadSnapshotImage(bytes)
             if (remoteUrl.isNullOrBlank()) return@withContext false
@@ -402,7 +399,10 @@ object CloudSyncManager {
         // Relay (ntfy) menolak/mengubah pesan > 4096 byte menjadi lampiran sehingga penerima tidak bisa membacanya
         // dan fotonya "hilang" diam-diam. Pesan dijaga di bawah batas itu: thumbnail hanya ikut jika muat,
         // kalau tidak foto tetap sampai lewat URL.
-        val tinyThumb = createTinyThumbnailBase64(snapshot.imageBase64)
+        val tinyThumb = createTinyThumbnailBase64(
+            snapshot.imageBase64 ?: com.sideby.mobile.util.PhotoStore.bytesFor(context, snapshot)
+                ?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+        )
         var payload = SyncPayload(
             type = "SNAPSHOT", senderRole = role, senderId = myDeviceId,
             snapshotData = updatedLocal.copy(imageBase64 = tinyThumb)
@@ -758,10 +758,13 @@ object CloudSyncManager {
                             var resolvedSnap: DailySnapshot? = null
                             if (incomingSnap != null) {
                                 val inGallery = MobileDataManager.getSnapshotGallery(context)
-                                    .find { it.id == incomingSnap.id && !it.imageBase64.isNullOrBlank() }
+                                    .find { it.id == incomingSnap.id }
                                 var base64 = incomingSnap.imageBase64.takeIf { !it.isNullOrBlank() } ?: inGallery?.imageBase64
                                 val snapUrl = incomingSnap.imageUrl ?: inGallery?.imageUrl
-                                if (base64.isNullOrBlank() && !snapUrl.isNullOrBlank()) {
+                                // Foto yang sudah ada di HP tidak diunduh lagi.
+                                if (base64.isNullOrBlank() && !snapUrl.isNullOrBlank() &&
+                                    !com.sideby.mobile.util.PhotoStore.has(context, incomingSnap.id)
+                                ) {
                                     downloadImageBytes(snapUrl)?.let {
                                         base64 = android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)
                                     }
@@ -887,7 +890,7 @@ object CloudSyncManager {
                             val validTime = if (snapshot.timestamp > 0L) snapshot.timestamp else if (payload.timestamp > 0L) payload.timestamp else System.currentTimeMillis()
                             var fullSnapshot = snapshot.copy(timestamp = validTime)
                             val photoUrl = fullSnapshot.imageUrl
-                            if (!photoUrl.isNullOrBlank()) {
+                            if (!photoUrl.isNullOrBlank() && !com.sideby.mobile.util.PhotoStore.has(context, fullSnapshot.id)) {
                                 val downloadedBytes = downloadImageBytes(photoUrl)
                                 if (downloadedBytes != null) {
                                     val b64 = android.util.Base64.encodeToString(downloadedBytes, android.util.Base64.NO_WRAP)

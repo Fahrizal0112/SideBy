@@ -280,12 +280,13 @@ fun PhotoViewerDialog(
 
     // Simpan ke galeri HP (folder Pictures/Sideby). Android 9 ke bawah butuh izin penyimpanan; 10 ke atas tidak.
     val doSave: () -> Unit = {
-        val b64 = live.imageBase64
-        if (b64.isNullOrBlank()) {
-            Toast.makeText(context, "Foto belum selesai diunduh", Toast.LENGTH_SHORT).show()
-        } else {
-            scope.launch {
-                val ok = savePhotoToGallery(context, b64, live.timestamp)
+        val target = live
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) { com.sideby.mobile.util.PhotoStore.bytesFor(context, target) }
+            if (bytes == null) {
+                Toast.makeText(context, "Foto belum selesai diunduh", Toast.LENGTH_SHORT).show()
+            } else {
+                val ok = savePhotoToGallery(context, bytes, target.timestamp)
                 Toast.makeText(
                     context,
                     if (ok) "Foto disimpan di galeri (album Sideby)" else "Foto gagal disimpan",
@@ -523,24 +524,10 @@ fun PhotoViewerDialog(
     }
 }
 
-/** Satu foto di pager layar penuh: mengunduh dari server bila belum ada di HP, lalu bisa di-zoom. */
+/** Satu foto di pager layar penuh: dibaca dari berkas di HP (atau diunduh bila belum ada), lalu bisa di-zoom. */
 @Composable
 private fun ViewerPage(snap: DailySnapshot, isCurrent: Boolean, onZoomedChange: (Boolean) -> Unit) {
-    val context = LocalContext.current
-    var b64 by remember(snap.id) { mutableStateOf(snap.imageBase64) }
-    LaunchedEffect(snap.imageBase64) { if (!snap.imageBase64.isNullOrBlank()) b64 = snap.imageBase64 }
-    LaunchedEffect(snap.id, snap.imageUrl) {
-        val url = snap.imageUrl
-        if (b64.isNullOrBlank() && !url.isNullOrBlank()) {
-            val bytes = CloudSyncManager.downloadImageBytes(url)
-            if (bytes != null) {
-                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                b64 = encoded
-                withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, snap.copy(imageBase64 = encoded)) }
-            }
-        }
-    }
-    val bitmap = rememberBitmap(b64)
+    val bitmap = rememberSnapshotBitmap(snap, 1600)
     val currentFlag by rememberUpdatedState(isCurrent)
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
@@ -556,10 +543,9 @@ private fun ViewerPage(snap: DailySnapshot, isCurrent: Boolean, onZoomedChange: 
 }
 
 /** Menulis foto (yang sudah berformat JPEG) apa adanya ke galeri lewat MediaStore, tanpa kompresi ulang. */
-private suspend fun savePhotoToGallery(context: Context, base64: String, timestamp: Long): Boolean =
+private suspend fun savePhotoToGallery(context: Context, bytes: ByteArray, timestamp: Long): Boolean =
     withContext(Dispatchers.IO) {
         try {
-            val bytes = Base64.decode(base64, Base64.DEFAULT)
             if (bytes.isEmpty()) return@withContext false
             val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(if (timestamp > 0L) timestamp else System.currentTimeMillis()))
             val name = "Sideby_$stamp.jpg"

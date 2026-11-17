@@ -300,6 +300,8 @@ class MainActivity : ComponentActivity() {
 
         if (MobileDataManager.isSetupCompleted(this)) {
             SidebyBackgroundSyncService.start(this)
+            // Foto lama (dulu tersimpan sebagai teks, maksimal 60) dipindah ke berkas; sekali saja.
+            Thread { try { MobileDataManager.migrateGalleryToFiles(applicationContext) } catch (_: Exception) {} }.start()
         }
 
         setContent {
@@ -1000,6 +1002,20 @@ internal fun rememberBitmap(base64: String?): ImageBitmap? {
     return state.value
 }
 
+/**
+ * Gambar sebuah foto untuk ditampilkan: dibaca dari berkas di HP (atau diunduh dari server bila belum ada)
+ * dengan ukuran sesuai kebutuhan, di luar main thread. Cocok untuk foto sebanyak apa pun.
+ */
+@Composable
+internal fun rememberSnapshotBitmap(snap: DailySnapshot?, maxDim: Int): ImageBitmap? {
+    val context = LocalContext.current
+    val state = produceState<ImageBitmap?>(initialValue = null, snap?.id, snap?.imageUrl, snap?.imageBase64?.length, maxDim) {
+        value = if (snap == null) null
+        else com.sideby.mobile.util.PhotoStore.load(context, snap, maxDim)?.asImageBitmap()
+    }
+    return state.value
+}
+
 private fun relativeTime(millis: Long, now: Long): String {
     if (millis <= 0L) return ""
     val diff = (now - millis).coerceAtLeast(0L)
@@ -1084,19 +1100,8 @@ private fun HomePhotoPage(
     onOpen: () -> Unit
 ) {
     val context = LocalContext.current
-    val bitmap = rememberBitmap(snap.imageBase64)
-
-    // Foto lama yang belum diunduh ke HP diambil dari server saat halamannya terlihat.
-    LaunchedEffect(snap.id, snap.imageUrl, snap.imageBase64?.length) {
-        val url = snap.imageUrl
-        if (snap.imageBase64.isNullOrBlank() && !url.isNullOrBlank()) {
-            val bytes = CloudSyncManager.downloadImageBytes(url)
-            if (bytes != null) {
-                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, snap.copy(imageBase64 = b64)) }
-            }
-        }
-    }
+    // Dibaca dari berkas di HP; foto yang belum ada diunduh dari server saat halamannya terlihat.
+    val bitmap = rememberSnapshotBitmap(snap, 1280)
 
     val enter = remember(snap.id) { Animatable(0.92f) }
     var photoTaps by remember(snap.id) { mutableIntStateOf(0) }
@@ -1423,7 +1428,7 @@ fun HomeScreenTab() {
     // karena itu membuat foto di layar berpindah-pindah saat unduhan selesai.
     val photoList = remember(galleryList, partner.snapshot, myStatus.snapshot) {
         (galleryList + listOfNotNull(partner.snapshot, myStatus.snapshot))
-            .filter { !it.imageBase64.isNullOrBlank() || !it.imageUrl.isNullOrBlank() }
+            .filter { com.sideby.mobile.util.PhotoStore.hasImage(context, it) }
             .groupBy { it.id }
             .map { (_, versions) -> versions.maxByOrNull { it.imageBase64?.length ?: 0 }!! }
             .sortedByDescending { it.timestamp }
@@ -1922,17 +1927,7 @@ fun HomeScreenTab() {
                             modifier = Modifier.fillMaxSize()
                         ) {
                             items(galleryList, key = { it.id }) { item ->
-                                val bmp = rememberBitmap(item.imageBase64)
-                                LaunchedEffect(item.id, item.imageBase64?.length, item.imageUrl) {
-                                    val url = item.imageUrl
-                                    if (item.imageBase64.isNullOrBlank() && !url.isNullOrBlank()) {
-                                        val bytes = CloudSyncManager.downloadImageBytes(url)
-                                        if (bytes != null) {
-                                            val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                                            withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, item.copy(imageBase64 = b64)) }
-                                        }
-                                    }
-                                }
+                                val bmp = rememberSnapshotBitmap(item, 360)
                                 Box(
                                     modifier = Modifier
                                         .aspectRatio(1f)
@@ -2769,7 +2764,7 @@ private fun ChatBubble(
                         }
                     }
                     if (msg.photoId != null) {
-                        val bmp = rememberBitmap(photo?.imageBase64)
+                        val bmp = rememberSnapshotBitmap(photo, 400)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()

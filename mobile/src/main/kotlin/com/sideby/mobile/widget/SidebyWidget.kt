@@ -210,15 +210,16 @@ class SidebySnapshotWidget : GlanceAppWidget() {
 
         val allCandidates = (gallery + listOfNotNull(partner.snapshot, myStatus.snapshot))
             .distinctBy { it.id }
-            .filter { !it.imageBase64.isNullOrBlank() || !it.imageUrl.isNullOrBlank() }
+            .filter { com.sideby.mobile.util.PhotoStore.hasImage(context, it) }
 
         // Pilih foto dengan timestamp paling terbaru secara deterministik
-        val latestWithImage = allCandidates.filter { !it.imageBase64.isNullOrBlank() }.maxByOrNull { it.timestamp }
+        val latestWithImage = allCandidates
+            .filter { !it.imageBase64.isNullOrBlank() || com.sideby.mobile.util.PhotoStore.has(context, it.id) }
+            .maxByOrNull { it.timestamp }
         val snapshot = latestWithImage ?: allCandidates.maxByOrNull { it.timestamp }
 
-        val imageBase64 = snapshot?.imageBase64
-            ?: (snapshot?.let { snap -> gallery.find { it.id == snap.id && !it.imageBase64.isNullOrBlank() }?.imageBase64 })
-        val bitmap = imageBase64?.let { decodeBase64ToBitmap(it) }
+        // Ukuran dibatasi (~700 px) supaya muat dikirim ke layar utama; foto aslinya tetap utuh di HP.
+        val bitmap = snapshot?.let { com.sideby.mobile.util.PhotoStore.load(context, it, 700) }
 
         val headerTitle = if (partner.isConnected && snapshot == partner.snapshot) {
             "📸 Locket • ${partner.name}"
