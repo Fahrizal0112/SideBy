@@ -19,10 +19,15 @@ data class ChatMessage(
     /** Voice note: alamat berkas rekaman di server perantara, dan lamanya (ms). 0 = bukan voice note. */
     val audioUrl: String? = null,
     val audioMillis: Long = 0L,
+    /** Membalas pesan lain: id pesan asal, nama pengirimnya, dan cuplikan isinya (supaya kutipan tetap tampil). */
+    val replyToId: String? = null,
+    val replyName: String = "",
+    val replyText: String = "",
     /** Hanya dipakai lokal: true = pesan saya yang belum berhasil terkirim. */
     val pending: Boolean = false
 ) {
     companion object {
         const val MAX_TEXT_LENGTH = 400
+        const val MAX_REPLY_PREVIEW = 80
     }
 }

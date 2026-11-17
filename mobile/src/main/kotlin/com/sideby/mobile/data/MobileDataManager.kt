@@ -34,6 +34,9 @@ object MobileDataManager {
     private const val KEY_CHAT = "key_chat_messages"
     private const val KEY_REACTIONS = "key_photo_reactions"
     private const val KEY_CHAT_LAST_READ = "key_chat_last_read"
+    private const val KEY_READ_OWED = "key_chat_read_owed"
+    private const val KEY_READ_SENT = "key_chat_read_sent"
+    private const val KEY_PARTNER_READ = "key_chat_partner_read"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -574,8 +577,39 @@ object MobileDataManager {
     fun getChatLastRead(context: Context): Long =
         prefs(context).getLong(getRoomKey(context, KEY_CHAT_LAST_READ), 0L)
 
+    /** Pasangan sudah membaca pesanku sampai penanda waktu ini (0 = belum / tidak diketahui). */
+    fun getPartnerReadUpTo(context: Context): Long =
+        prefs(context).getLong(getRoomKey(context, KEY_PARTNER_READ), 0L)
+
+    /** @return true bila penandanya maju (tanda "dibaca" pada pesanku perlu diperbarui). */
+    fun setPartnerReadUpTo(context: Context, ts: Long): Boolean = synchronized(statusLock) {
+        if (ts <= getPartnerReadUpTo(context)) return@synchronized false
+        prefs(context).edit().putLong(getRoomKey(context, KEY_PARTNER_READ), ts).apply()
+        dataVersionCounter.incrementAndGet()
+        true
+    }
+
+    /** Penanda "sudah kubaca" yang belum sempat diberitahukan ke pasangan (0 = tidak ada). */
+    fun getUnsentReadMark(context: Context): Long {
+        val owed = prefs(context).getLong(getRoomKey(context, KEY_READ_OWED), 0L)
+        val sent = prefs(context).getLong(getRoomKey(context, KEY_READ_SENT), 0L)
+        return if (owed > sent) owed else 0L
+    }
+
+    fun markReadMarkSent(context: Context, ts: Long) {
+        val key = getRoomKey(context, KEY_READ_SENT)
+        if (ts > prefs(context).getLong(key, 0L)) prefs(context).edit().putLong(key, ts).apply()
+    }
+
     fun markChatRead(context: Context) {
-        val last = getChatMessages(context).maxOfOrNull { it.timestamp } ?: return
+        val all = getChatMessages(context)
+        val me = getMyDeviceId(context)
+        // Pesan dari pasangan yang kini sudah terlihat; pasangan diberi tahu lewat tanda baca.
+        val incoming = all.filter { it.senderId != me }.maxOfOrNull { it.timestamp }
+        if (incoming != null && incoming > prefs(context).getLong(getRoomKey(context, KEY_READ_OWED), 0L)) {
+            prefs(context).edit().putLong(getRoomKey(context, KEY_READ_OWED), incoming).apply()
+        }
+        val last = all.maxOfOrNull { it.timestamp } ?: return
         if (last > getChatLastRead(context)) {
             prefs(context).edit().putLong(getRoomKey(context, KEY_CHAT_LAST_READ), last).apply()
             dataVersionCounter.incrementAndGet()

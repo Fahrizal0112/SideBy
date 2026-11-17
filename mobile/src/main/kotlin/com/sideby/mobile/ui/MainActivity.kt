@@ -14,6 +14,13 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.activity.SystemBarStyle
@@ -247,6 +254,7 @@ object SidebyColors {
     val TintMint = Color(0x6678E0B0)
     val TintSky = Color(0x667FC1FF)
     val TintPeach = Color(0x66FFB890)
+    val ReadBlue = Color(0xFF2F9BFF)
     val BatteryOk = Color(0xFF1F9D63)
     val BatteryWarn = Color(0xFFD6870F)
     val BatteryLow = Color(0xFFD13F4B)
@@ -1966,7 +1974,11 @@ private fun UpdateCard() {
 // ==========================================
 // CHAT
 // ==========================================
-internal suspend fun sendChatMessage(context: Context, text: String, photoId: String?) {
+/** Cuplikan pendek sebuah pesan untuk kutipan balasan. */
+internal fun replySnippet(m: ChatMessage): String =
+    if (m.audioMillis > 0L) "Pesan suara" else m.text.replace('\n', ' ').take(ChatMessage.MAX_REPLY_PREVIEW)
+
+internal suspend fun sendChatMessage(context: Context, text: String, photoId: String?, reply: ChatMessage? = null) {
     val clean = text.trim().take(ChatMessage.MAX_TEXT_LENGTH)
     if (clean.isBlank()) return
     val me = MobileDataManager.getMyStatus(context)
@@ -1975,6 +1987,9 @@ internal suspend fun sendChatMessage(context: Context, text: String, photoId: St
         senderName = me.name,
         text = clean,
         photoId = photoId,
+        replyToId = reply?.id,
+        replyName = reply?.senderName.orEmpty(),
+        replyText = reply?.let { replySnippet(it) }.orEmpty(),
         pending = true
     )
     // Simpan lokal dulu (langsung tampil), lalu kirim; jika gagal, service mencoba lagi otomatis.
@@ -2000,11 +2015,14 @@ internal suspend fun setMyReaction(context: Context, photoId: String, emoji: Str
 }
 
 /** Simpan rekaman lalu kirim. Gagal terkirim = tetap di antrean dan dicoba lagi otomatis, seperti chat biasa. */
-internal suspend fun sendVoiceMessage(context: Context, recording: File, millis: Long) {
+internal suspend fun sendVoiceMessage(context: Context, recording: File, millis: Long, reply: ChatMessage? = null) {
     val me = MobileDataManager.getMyStatus(context)
     val msg = ChatMessage(
         senderId = MobileDataManager.getMyDeviceId(context),
         senderName = me.name,
+        replyToId = reply?.id,
+        replyName = reply?.senderName.orEmpty(),
+        replyText = reply?.let { replySnippet(it) }.orEmpty(),
         // Teks ini hanya terlihat di aplikasi versi lama yang belum bisa memutar voice note.
         text = "[Pesan suara]",
         audioMillis = millis,
@@ -2242,7 +2260,13 @@ fun ChatScreenTab() {
     var photos by remember { mutableStateOf<List<DailySnapshot>>(emptyList()) }
     var input by remember { mutableStateOf("") }
     var openedPhoto by remember { mutableStateOf<DailySnapshot?>(null) }
+    var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
+    var highlightId by remember { mutableStateOf<String?>(null) }
+    var partnerRead by remember { mutableLongStateOf(MobileDataManager.getPartnerReadUpTo(context)) }
     val listState = rememberLazyListState()
+    LaunchedEffect(highlightId) {
+        if (highlightId != null) { delay(1500); highlightId = null }
+    }
     DisposableEffect(Unit) { onDispose { VoicePlayer.stop() } }
 
     // "Chat terbuka" hanya benar saat layar benar-benar terlihat (RESUMED). Jika kamu menekan Home / mengunci
@@ -2270,7 +2294,11 @@ fun ChatScreenTab() {
 
     // Tandai terbaca hanya ketika layar terlihat, termasuk saat kembali ke aplikasi.
     LaunchedEffect(screenVisible, messages.size) {
-        if (screenVisible) withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
+        if (screenVisible) {
+            withContext(Dispatchers.IO) { MobileDataManager.markChatRead(context) }
+            // Beri tahu pasangan bahwa pesannya sudah terbaca (centang jadi biru di HP-nya).
+            CloudSyncManager.flushReadReceipt(context)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -2281,6 +2309,8 @@ fun ChatScreenTab() {
                 lastVersion = v
                 val chat = withContext(Dispatchers.IO) { MobileDataManager.getChatMessages(context) }
                 if (messages != chat) messages = chat
+                val pr = MobileDataManager.getPartnerReadUpTo(context)
+                if (pr != partnerRead) partnerRead = pr
                 // Galeri (berat) hanya dimuat ulang bila ada foto yang dirujuk tapi belum kita punya.
                 val needed = chat.mapNotNull { it.photoId }.toSet()
                 if (needed.any { id -> photos.none { it.id == id } }) {
@@ -2340,11 +2370,35 @@ fun ChatScreenTab() {
                         )
                     }
                     val bubblePhoto = msg.photoId?.let { id -> photos.firstOrNull { it.id == id } }
+                    val mine = msg.senderId == myId
+                    val original = msg.replyToId?.let { id -> messages.firstOrNull { it.id == id } }
+                    val quoteName = when {
+                        msg.replyToId == null -> null
+                        original != null -> if (original.senderId == myId) "Kamu" else partnerName.ifBlank { original.senderName }
+                        else -> msg.replyName.ifBlank { "Pesan" }
+                    }
                     ChatBubble(
                         msg = msg,
-                        mine = msg.senderId == myId,
+                        mine = mine,
                         photo = bubblePhoto,
-                        onPhotoClick = { bubblePhoto?.let { openedPhoto = it } }
+                        status = when {
+                            !mine -> 0
+                            msg.pending -> 1
+                            msg.timestamp <= partnerRead -> 3
+                            else -> 2
+                        },
+                        quoteName = quoteName,
+                        quoteText = original?.let { replySnippet(it) } ?: msg.replyText,
+                        highlighted = highlightId == msg.id,
+                        onPhotoClick = { bubblePhoto?.let { openedPhoto = it } },
+                        onReply = { replyingTo = msg },
+                        onQuoteClick = {
+                            val target = msg.replyToId?.let { id -> messages.indexOfFirst { it.id == id } } ?: -1
+                            if (target >= 0) {
+                                highlightId = messages[target].id
+                                coroutineScope.launch { listState.animateScrollToItem(target) }
+                            }
+                        }
                     )
                 }
             }
@@ -2352,24 +2406,100 @@ fun ChatScreenTab() {
 
         run {
             Box(modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 6.dp + LocalBottomBarInset.current)) {
-                ChatInputBar(
-                    value = input,
-                    onValueChange = { input = it },
-                    placeholder = "Tulis pesan untuk $partnerName",
-                    onSend = {
-                        val text = input
-                        input = ""
-                        coroutineScope.launch { sendChatMessage(context, text, null) }
-                    },
-                    onVoice = { file, ms -> coroutineScope.launch { sendVoiceMessage(context, file, ms) } }
-                )
+                Column {
+                    AnimatedVisibility(
+                        visible = replyingTo != null,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        // Simpan pesan terakhir supaya animasi keluar tidak kosong.
+                        val target = remember(replyingTo?.id) { replyingTo }
+                        if (target != null) {
+                            ReplyStrip(
+                                name = if (target.senderId == myId) "Kamu" else partnerName.ifBlank { target.senderName },
+                                text = replySnippet(target),
+                                onClose = { replyingTo = null }
+                            )
+                        }
+                    }
+                    ChatInputBar(
+                        value = input,
+                        onValueChange = { input = it },
+                        placeholder = if (replyingTo != null) "Tulis balasan" else "Tulis pesan untuk $partnerName",
+                        onSend = {
+                            val text = input
+                            val reply = replyingTo
+                            input = ""
+                            replyingTo = null
+                            coroutineScope.launch { sendChatMessage(context, text, null, reply) }
+                        },
+                        onVoice = { file, ms ->
+                            val reply = replyingTo
+                            replyingTo = null
+                            coroutineScope.launch { sendVoiceMessage(context, file, ms, reply) }
+                        }
+                    )
+                }
             }
         }
     }
 }
 
+/** Strip kecil di atas kolom ketik: pesan yang sedang dibalas. */
 @Composable
-private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, onPhotoClick: () -> Unit = {}) {
+private fun ReplyStrip(name: String, text: String, onClose: () -> Unit) {
+    GlassSurface(
+        shape = RoundedCornerShape(22.dp),
+        color = Color.White.copy(alpha = 0.50f),
+        shadowElevation = 6.dp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.height(IntrinsicSize.Min).padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(SidebyColors.RosePrimary)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Membalas $name", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary, maxLines = 1)
+                Text(
+                    text,
+                    fontSize = 13.sp,
+                    color = SidebyColors.TextMuted,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, contentDescription = "Batal membalas", tint = SidebyColors.TextMuted, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Balon chat. [status] untuk pesanku: 1 = sedang mengirim, 2 = terkirim, 3 = sudah dibaca (0 = pesan pasangan).
+ * Geser ke kanan (atau tahan lama) untuk membalas.
+ */
+@Composable
+private fun ChatBubble(
+    msg: ChatMessage,
+    mine: Boolean,
+    photo: DailySnapshot?,
+    status: Int = 0,
+    quoteName: String? = null,
+    quoteText: String = "",
+    highlighted: Boolean = false,
+    onPhotoClick: () -> Unit = {},
+    onReply: () -> Unit = {},
+    onQuoteClick: () -> Unit = {}
+) {
     val bubbleShape = if (mine) RoundedCornerShape(24.dp, 24.dp, 6.dp, 24.dp) else RoundedCornerShape(24.dp, 24.dp, 24.dp, 6.dp)
     // Hanya pesan yang baru masuk (beberapa detik terakhir) yang "meletus" muncul dari sudut balonnya;
     // riwayat lama tampil biasa supaya tidak heboh saat membuka chat.
@@ -2378,65 +2508,190 @@ private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, o
     LaunchedEffect(msg.id) {
         if (fresh) pop.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium))
     }
-    Column(
+
+    // Geser untuk membalas: balon ikut tergeser, ikon balas muncul, lalu balon memantul kembali.
+    val density = LocalDensity.current
+    val triggerPx = with(density) { 64.dp.toPx() }
+    val maxPx = with(density) { 88.dp.toPx() }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val swipeScope = rememberCoroutineScope()
+    var dragX by remember(msg.id) { mutableFloatStateOf(0f) }
+    var triggered by remember(msg.id) { mutableStateOf(false) }
+    val springBack: () -> Unit = {
+        swipeScope.launch {
+            androidx.compose.animation.core.animate(
+                dragX, 0f, animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium)
+            ) { v, _ -> dragX = v }
+        }
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .graphicsLayer {
-                val p = pop.value
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
-                scaleX = 0.5f + 0.5f * p
-                scaleY = 0.5f + 0.5f * p
-                alpha = (p * 3f).coerceIn(0f, 1f)
-            },
-        horizontalAlignment = if (mine) Alignment.End else Alignment.Start
-    ) {
-        GlassSurface(
-            shape = bubbleShape,
-            color = if (mine) SidebyColors.RosePrimary else Color.White.copy(alpha = 0.55f),
-            glossy = mine,
-            shadowElevation = 6.dp,
-            modifier = Modifier.widthIn(max = 290.dp)
-        ) {
-            Column(modifier = Modifier.padding(10.dp)) {
-                if (msg.photoId != null) {
-                    val bmp = rememberBitmap(photo?.imageBase64)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(110.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (mine) Color.White.copy(alpha = 0.2f) else SidebyColors.DelicatePink)
-                            .clickable(enabled = photo != null, onClick = onPhotoClick),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (bmp != null) {
-                            Image(bitmap = bmp, contentDescription = "Foto yang dibalas", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                        } else {
-                            Icon(Icons.Outlined.PhotoCamera, contentDescription = null, tint = if (mine) Color.White else SidebyColors.TextSubtle)
+            .pointerInput(msg.id) {
+                detectHorizontalDragGestures(
+                    onDragStart = { triggered = false },
+                    onDragEnd = { springBack() },
+                    onDragCancel = { springBack() },
+                    onHorizontalDrag = { change, dx ->
+                        val next = (dragX + dx * 0.6f).coerceIn(0f, maxPx)
+                        if (next > 0f || dx > 0f) change.consume()
+                        dragX = next
+                        if (!triggered && next >= triggerPx) {
+                            triggered = true
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onReply()
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                )
+            }
+    ) {
+        val reveal = (dragX / triggerPx).coerceIn(0f, 1f)
+        if (dragX > 1f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 8.dp)
+                    .size(34.dp)
+                    .graphicsLayer {
+                        alpha = reveal
+                        scaleX = 0.5f + 0.5f * reveal
+                        scaleY = 0.5f + 0.5f * reveal
+                    }
+                    .glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.20f, elevation = 0.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(18.dp))
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    val p = pop.value
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (mine) 1f else 0f, 1f)
+                    scaleX = 0.5f + 0.5f * p
+                    scaleY = 0.5f + 0.5f * p
+                    alpha = (p * 3f).coerceIn(0f, 1f)
+                    translationX = dragX
+                },
+            horizontalAlignment = if (mine) Alignment.End else Alignment.Start
+        ) {
+            GlassSurface(
+                shape = bubbleShape,
+                color = if (mine) SidebyColors.RosePrimary else Color.White.copy(alpha = 0.55f),
+                glossy = mine,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .widthIn(max = 290.dp)
+                    .then(if (highlighted) Modifier.border(2.dp, SidebyColors.RosePrimary.copy(alpha = 0.75f), bubbleShape) else Modifier)
+                    .pointerInput(msg.id) {
+                        detectTapGestures(onLongPress = {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onReply()
+                        })
+                    }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .then(if (quoteName != null) Modifier.width(IntrinsicSize.Max) else Modifier)
+                        .padding(10.dp)
+                ) {
+                    if (quoteName != null) {
+                        // Kutipan pesan yang dibalas; diketuk = lompat ke pesan aslinya.
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (mine) Color.White.copy(alpha = 0.22f) else SidebyColors.RosePrimary.copy(alpha = 0.10f))
+                                .clickable(onClick = onQuoteClick)
+                                .height(IntrinsicSize.Min)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .fillMaxHeight()
+                                    .background(if (mine) Color.White else SidebyColors.RosePrimary)
+                            )
+                            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                Text(
+                                    quoteName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (mine) Color.White else SidebyColors.RosePrimary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    quoteText.ifBlank { "Pesan" },
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp,
+                                    color = if (mine) Color.White.copy(alpha = 0.9f) else SidebyColors.TextMuted,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    if (msg.photoId != null) {
+                        val bmp = rememberBitmap(photo?.imageBase64)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(110.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (mine) Color.White.copy(alpha = 0.2f) else SidebyColors.DelicatePink)
+                                .clickable(enabled = photo != null, onClick = onPhotoClick),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (bmp != null) {
+                                Image(bitmap = bmp, contentDescription = "Foto yang dibalas", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                            } else {
+                                Icon(Icons.Outlined.PhotoCamera, contentDescription = null, tint = if (mine) Color.White else SidebyColors.TextSubtle)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    if (msg.audioMillis > 0L) {
+                        VoiceBubbleContent(msg = msg, mine = mine)
+                    } else {
+                        Text(
+                            msg.text,
+                            fontSize = 15.sp,
+                            lineHeight = 21.sp,
+                            color = if (mine) Color.White else SidebyColors.TextDeep
+                        )
+                    }
                 }
-                if (msg.audioMillis > 0L) {
-                    VoiceBubbleContent(msg = msg, mine = mine)
-                } else {
-                    Text(
-                        msg.text,
-                        fontSize = 15.sp,
-                        lineHeight = 21.sp,
-                        color = if (mine) Color.White else SidebyColors.TextDeep
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                val stuck = msg.pending && System.currentTimeMillis() - msg.timestamp >= 25_000L
+                Text(
+                    text = if (stuck) "Belum terkirim, menunggu koneksi"
+                    else SimpleDateFormat("HH:mm", Locale("id", "ID")).format(Date(msg.timestamp)),
+                    fontSize = 11.sp,
+                    color = if (stuck) SidebyColors.BatteryWarn else SidebyColors.TextSubtle
+                )
+                if (mine && status > 0) {
+                    // 1 centang = sedang mengirim, 2 centang = terkirim, 2 centang biru = sudah dibaca.
+                    val tint by androidx.compose.animation.animateColorAsState(
+                        targetValue = if (status == 3) SidebyColors.ReadBlue else SidebyColors.TextSubtle,
+                        animationSpec = tween(300),
+                        label = "tickTint"
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (status == 1) Icons.Filled.Done else Icons.Filled.DoneAll,
+                        contentDescription = when (status) { 1 -> "Mengirim"; 2 -> "Terkirim"; else -> "Dibaca" },
+                        tint = tint,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
         }
-        Text(
-            text = if (msg.pending) {
-                if (System.currentTimeMillis() - msg.timestamp < 25_000L) "Mengirim..." else "Belum terkirim, menunggu koneksi"
-            } else SimpleDateFormat("HH:mm", Locale("id", "ID")).format(Date(msg.timestamp)),
-            fontSize = 11.sp,
-            color = if (msg.pending) SidebyColors.BatteryWarn else SidebyColors.TextSubtle,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-        )
     }
 }
 

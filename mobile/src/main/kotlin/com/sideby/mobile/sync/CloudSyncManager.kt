@@ -41,7 +41,7 @@ import java.util.UUID
 
 @Serializable
 data class SyncPayload(
-    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT", "REACT"
+    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT", "REACT", "READ"
     val senderRole: String = "", // "CREATOR" or "PARTNER"
     val senderId: String = "", // Device UUID to avoid self-echo
     val configData: CoupleRoomConfig? = null,
@@ -50,6 +50,8 @@ data class SyncPayload(
     val snapshotData: DailySnapshot? = null,
     val chatData: com.sideby.mobile.data.ChatMessage? = null,
     val reactData: com.sideby.mobile.data.PhotoReaction? = null,
+    /** Untuk tipe "READ": semua pesanku dengan penanda waktu sampai sini sudah dibaca pasangan. */
+    val readUpTo: Long = 0L,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -423,6 +425,25 @@ object CloudSyncManager {
             MobileDataManager.getRoomCode(context),
             SyncPayload(type = "REACT", senderRole = role, senderId = MobileDataManager.getMyDeviceId(context), reactData = r.copy(pending = false))
         )
+    }
+
+    private val readFlushMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Beri tahu pasangan bahwa pesannya sudah kubaca. Bila gagal, dicoba lagi oleh service. */
+    suspend fun flushReadReceipt(context: Context) = withContext(Dispatchers.IO) {
+        if (!readFlushMutex.tryLock()) return@withContext
+        try {
+            val mark = MobileDataManager.getUnsentReadMark(context)
+            if (mark <= 0L) return@withContext
+            val role = if (MobileDataManager.isCreator(context)) "CREATOR" else "PARTNER"
+            val ok = sendToRelay(
+                MobileDataManager.getRoomCode(context),
+                SyncPayload(type = "READ", senderRole = role, senderId = MobileDataManager.getMyDeviceId(context), readUpTo = mark)
+            )
+            if (ok) MobileDataManager.markReadMarkSent(context, mark)
+        } finally {
+            readFlushMutex.unlock()
+        }
     }
 
     private val reactFlushMutex = kotlinx.coroutines.sync.Mutex()
@@ -804,6 +825,9 @@ object CloudSyncManager {
                                 }
                             }
                         }
+                    }
+                    "READ" -> {
+                        if (payload.readUpTo > 0L) MobileDataManager.setPartnerReadUpTo(context, payload.readUpTo)
                     }
                     "REACT" -> {
                         payload.reactData?.let { incoming ->
