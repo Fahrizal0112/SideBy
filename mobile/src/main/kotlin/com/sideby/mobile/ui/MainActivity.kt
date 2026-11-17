@@ -1104,7 +1104,7 @@ private fun HomePhotoPage(
     LaunchedEffect(snap.id) {
         enter.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow))
     }
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer {
@@ -1116,6 +1116,7 @@ private fun HomePhotoPage(
             .padding(5.dp)
             .bounceClick(pressedScale = 0.97f) { photoTaps++; if (bitmap != null) onOpen() }
     ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
         if (bitmap != null) {
             Image(
                 bitmap = bitmap,
@@ -1172,6 +1173,125 @@ private fun HomePhotoPage(
                 )
             }
         }
+        }
+        // Catatan dari pengirim, mis. "dingin banget".
+        if (snap.caption.isNotBlank()) {
+            Text(
+                text = "\u201C${snap.caption}\u201D",
+                fontSize = 17.sp,
+                lineHeight = 24.sp,
+                fontWeight = FontWeight.Medium,
+                fontStyle = FontStyle.Italic,
+                color = SidebyColors.TextDeep,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)
+            )
+        }
+    }
+}
+
+private const val PHOTO_CAPTION_MAX = 80
+
+/** Pratinjau kecil (sudah diputar sesuai EXIF) untuk dialog catatan; tidak dipakai untuk foto yang dikirim. */
+private suspend fun decodePhotoPreview(context: Context, uri: Uri): ImageBitmap? = withContext(Dispatchers.IO) {
+    try {
+        val rotation = try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                when (ExifInterface(stream).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
+                    ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                    ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                    ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                    else -> 0f
+                }
+            } ?: 0f
+        } catch (e: Exception) {
+            0f
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1000) sample *= 2
+        val bmp = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: return@withContext null
+        val oriented = if (rotation != 0f) {
+            Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(rotation) }, true)
+        } else bmp
+        oriented.asImageBitmap()
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** Lihat foto yang akan dikirim dan tulis catatan singkat (opsional), mis. "dingin banget". */
+@Composable
+private fun PhotoCaptionDialog(uri: Uri, partnerName: String, onCancel: () -> Unit, onSend: (String) -> Unit) {
+    val context = LocalContext.current
+    val preview by produceState<ImageBitmap?>(initialValue = null, uri) { value = decodePhotoPreview(context, uri) }
+    var caption by remember { mutableStateOf("") }
+    Dialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        GlassSurface(
+            modifier = Modifier.fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(32.dp),
+            color = Color.White.copy(alpha = 0.78f),
+            shadowElevation = 20.dp
+        ) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(18.dp)) {
+                Text("Kirim foto", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = SidebyColors.TextDeep)
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp, max = 280.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(SidebyColors.DelicatePink),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = preview
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = "Foto yang akan dikirim",
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                GlassTextField(
+                    value = caption,
+                    onValueChange = { if (it.length <= PHOTO_CAPTION_MAX) caption = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Tambah catatan, mis. dingin banget") },
+                    supportingText = { Text("${caption.length}/$PHOTO_CAPTION_MAX \u2022 Catatan tampil di foto untuk $partnerName") },
+                    maxLines = 3,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onSend(caption) })
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    GlassOutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(25.dp)
+                    ) { Text("Batal", fontWeight = FontWeight.Bold) }
+                    GlassButton(
+                        onClick = { onSend(caption) },
+                        enabled = preview != null,
+                        modifier = Modifier.weight(1.4f).height(50.dp),
+                        shape = RoundedCornerShape(25.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Kirim", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1198,6 +1318,8 @@ fun HomeScreenTab() {
     var reactions by remember { mutableStateOf<List<PhotoReaction>>(emptyList()) }
     var showPhotoSourceDialog by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
+    // Foto yang sudah dipilih / dipotret dan sedang menunggu catatan sebelum dikirim.
+    var captionUri by remember { mutableStateOf<Uri?>(null) }
 
     // Muat ulang hanya ketika data benar-benar berubah (versi naik), dan di luar main thread.
     // Sebelumnya seluruh status + galeri di-decode ulang di main thread tiap 1,5 detik.
@@ -1235,14 +1357,14 @@ fun HomeScreenTab() {
         }
     }
 
-    val processPhotoUri: (Uri) -> Unit = { uri ->
+    val processPhotoUri: (Uri, String) -> Unit = { uri, caption ->
         coroutineScope.launch {
             Toast.makeText(context, "Mengirim foto...", Toast.LENGTH_SHORT).show()
             val base64 = encodeImageUriToBase64(context, uri)
             if (base64 != null) {
                 val snapshot = DailySnapshot(
                     imageBase64 = base64,
-                    caption = "",
+                    caption = caption.trim().take(PHOTO_CAPTION_MAX),
                     senderName = myStatus.name,
                     timestamp = System.currentTimeMillis()
                 )
@@ -1268,10 +1390,10 @@ fun HomeScreenTab() {
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) processPhotoUri(uri)
+        if (uri != null) captionUri = uri
     }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success: Boolean ->
-        if (success && tempCameraUri != null) processPhotoUri(tempCameraUri!!)
+        if (success && tempCameraUri != null) captionUri = tempCameraUri
     }
 
     val openCamera: () -> Unit = {
@@ -1728,6 +1850,19 @@ fun HomeScreenTab() {
         }
 
         Spacer(modifier = Modifier.height(LocalBottomBarInset.current))
+    }
+
+    // ---- Tambah catatan sebelum kirim ----
+    captionUri?.let { uri ->
+        PhotoCaptionDialog(
+            uri = uri,
+            partnerName = partner.name,
+            onCancel = { captionUri = null },
+            onSend = { caption ->
+                captionUri = null
+                processPhotoUri(uri, caption)
+            }
+        )
     }
 
     // ---- Pilih sumber foto ----

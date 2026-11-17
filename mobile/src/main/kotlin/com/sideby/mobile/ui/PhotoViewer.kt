@@ -367,6 +367,18 @@ fun PhotoViewerDialog(
                 }
             }
 
+            // Catatan dari pengirim, mis. "dingin banget".
+            if (live.caption.isNotBlank()) {
+                Text(
+                    text = "\u201C${live.caption}\u201D",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    lineHeight = 24.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp)
+                )
+            }
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 HorizontalPager(
                     state = pager,
