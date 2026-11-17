@@ -91,6 +91,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.pointer.positionChanged
+import com.sideby.mobile.sync.CloudSyncManager
 import com.sideby.mobile.data.ChatMessage
 import com.sideby.mobile.data.MobileDataManager
 import com.sideby.shared.model.DailySnapshot
@@ -137,15 +149,31 @@ fun ZoomableImage(
         modifier = modifier
             .onSizeChanged { box = it }
             .pointerInput(bitmap) {
-                detectTransformGestures { centroid, pan, zoom, _ ->
-                    val newScale = (scale * zoom).coerceIn(1f, MAX_ZOOM)
-                    val c = Offset(centroid.x - size.width / 2f, centroid.y - size.height / 2f)
-                    val applied = newScale / scale
-                    // Zoom mengikuti titik di antara dua jari, bukan pusat layar.
-                    val moved = offset * applied + c * (1f - applied) + pan
-                    scale = newScale
-                    offset = if (newScale <= 1.001f) Offset.Zero else clamp(moved, newScale)
-                    report()
+                // Dua jari = cubit / zoom. Satu jari hanya menggeser gambar saat sudah diperbesar;
+                // kalau belum, gestur dibiarkan lewat supaya bisa dipakai menggeser ke foto lain.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        if (event.changes.none { it.isConsumed } &&
+                            (event.changes.count { it.pressed } >= 2 || scale > 1.001f)
+                        ) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            if ((zoom != 1f || pan != Offset.Zero) && centroid.isSpecified) {
+                                val newScale = (scale * zoom).coerceIn(1f, MAX_ZOOM)
+                                val c = Offset(centroid.x - size.width / 2f, centroid.y - size.height / 2f)
+                                val applied = newScale / scale
+                                // Zoom mengikuti titik di antara dua jari, bukan pusat layar.
+                                val moved = offset * applied + c * (1f - applied) + pan
+                                scale = newScale
+                                offset = if (newScale <= 1.001f) Offset.Zero else clamp(moved, newScale)
+                                report()
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             }
             .pointerInput(bitmap) {
@@ -191,6 +219,7 @@ fun ZoomableImage(
  * Foto layar penuh berlatar gelap. Bisa di-zoom; komentar ada di bawah dan otomatis
  * menyingkir saat gambar sedang diperbesar supaya fotonya terlihat utuh.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PhotoViewerDialog(
     photo: DailySnapshot,
@@ -201,23 +230,33 @@ fun PhotoViewerDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val live = gallery.firstOrNull { it.id == photo.id } ?: photo
-    val bitmap = rememberBitmap(live.imageBase64)
+    // Semua foto, terbaru di depan; bisa digeser kiri-kanan. Foto yang dibuka selalu ikut ada di daftar.
+    val ordered = remember(gallery, photo) {
+        (gallery + photo)
+            .groupBy { it.id }
+            .map { (_, v) -> v.maxByOrNull { it.imageBase64?.length ?: 0 }!! }
+            .sortedByDescending { it.timestamp }
+    }
+    val pager = rememberPagerState(
+        initialPage = ordered.indexOfFirst { it.id == photo.id }.coerceAtLeast(0),
+        pageCount = { ordered.size }
+    )
+    val live = ordered.getOrNull(pager.currentPage) ?: photo
     val myId = remember { MobileDataManager.getMyDeviceId(context) }
     val comments = chat.filter { it.photoId == live.id }.sortedBy { it.timestamp }
-    var commentInput by remember(photo.id) { mutableStateOf("") }
-    var zoomed by remember(photo.id) { mutableStateOf(false) }
+    var commentInput by remember(live.id) { mutableStateOf("") }
+    var zoomed by remember(live.id) { mutableStateOf(false) }
 
     // ---- Reaksi ----
-    var reactions by remember(photo.id) { mutableStateOf<List<PhotoReaction>>(emptyList()) }
-    var rise by remember(photo.id) { mutableStateOf<Pair<String, Int>?>(null) }
-    var riseCounter by remember(photo.id) { mutableIntStateOf(0) }
-    val openedAt = remember(photo.id) { System.currentTimeMillis() }
-    DisposableEffect(photo.id) {
-        MobileDataManager.viewingPhotoId = photo.id
-        onDispose { if (MobileDataManager.viewingPhotoId == photo.id) MobileDataManager.viewingPhotoId = null }
+    var reactions by remember(live.id) { mutableStateOf<List<PhotoReaction>>(emptyList()) }
+    var rise by remember(live.id) { mutableStateOf<Pair<String, Int>?>(null) }
+    var riseCounter by remember(live.id) { mutableIntStateOf(0) }
+    val openedAt = remember(live.id) { System.currentTimeMillis() }
+    DisposableEffect(live.id) {
+        MobileDataManager.viewingPhotoId = live.id
+        onDispose { if (MobileDataManager.viewingPhotoId == live.id) MobileDataManager.viewingPhotoId = null }
     }
-    LaunchedEffect(photo.id) {
+    LaunchedEffect(live.id) {
         var lastVersion = -1L
         var lastPartnerStamp = 0L
         while (true) {
@@ -225,7 +264,7 @@ fun PhotoViewerDialog(
             if (v != lastVersion) {
                 lastVersion = v
                 val all = withContext(Dispatchers.IO) { MobileDataManager.getPhotoReactions(context) }
-                reactions = all.filter { it.photoId == photo.id }
+                reactions = all.filter { it.photoId == live.id }
                 // Pasangan bereaksi saat foto ini sedang dibuka: emojinya melayang di atas foto.
                 val pr = reactions.firstOrNull { it.senderId != myId && it.emoji.isNotBlank() }
                 if (pr != null && pr.timestamp > openedAt && pr.timestamp != lastPartnerStamp) {
@@ -298,6 +337,13 @@ fun PhotoViewerDialog(
                         color = Color.White.copy(alpha = 0.65f),
                         fontSize = 12.sp
                     )
+                    if (ordered.size > 1) {
+                        Text(
+                            "Foto ${pager.currentPage + 1} dari ${ordered.size}",
+                            color = Color.White.copy(alpha = 0.5f),
+                            fontSize = 11.sp
+                        )
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -322,15 +368,23 @@ fun PhotoViewerDialog(
             }
 
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (bitmap != null) {
-                    ZoomableImage(bitmap = bitmap, modifier = Modifier.fillMaxSize(), onZoomedChange = { zoomed = it })
-                } else {
-                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+                HorizontalPager(
+                    state = pager,
+                    userScrollEnabled = !zoomed,
+                    pageSpacing = 12.dp,
+                    key = { ordered.getOrNull(it)?.id ?: it },
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
+                    val snap = ordered.getOrNull(page)
+                    if (snap != null) {
+                        ViewerPage(snap = snap, isCurrent = page == pager.currentPage, onZoomedChange = { zoomed = it })
+                    }
                 }
                 rise?.let { (e, k) -> RiseEmoji(emoji = e, serial = k, modifier = Modifier.align(Alignment.Center)) }
-                if (bitmap != null && !zoomed) {
+                if (!zoomed) {
                     Text(
-                        "Cubit atau ketuk dua kali untuk memperbesar",
+                        if (ordered.size > 1) "Geser untuk foto lain, cubit atau ketuk dua kali untuk memperbesar"
+                        else "Cubit atau ketuk dua kali untuk memperbesar",
                         color = Color.White.copy(alpha = 0.55f),
                         fontSize = 11.sp,
                         modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
@@ -453,6 +507,38 @@ fun PhotoViewerDialog(
                     )
                 }
             }
+        }
+    }
+}
+
+/** Satu foto di pager layar penuh: mengunduh dari server bila belum ada di HP, lalu bisa di-zoom. */
+@Composable
+private fun ViewerPage(snap: DailySnapshot, isCurrent: Boolean, onZoomedChange: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    var b64 by remember(snap.id) { mutableStateOf(snap.imageBase64) }
+    LaunchedEffect(snap.imageBase64) { if (!snap.imageBase64.isNullOrBlank()) b64 = snap.imageBase64 }
+    LaunchedEffect(snap.id, snap.imageUrl) {
+        val url = snap.imageUrl
+        if (b64.isNullOrBlank() && !url.isNullOrBlank()) {
+            val bytes = CloudSyncManager.downloadImageBytes(url)
+            if (bytes != null) {
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                b64 = encoded
+                withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, snap.copy(imageBase64 = encoded)) }
+            }
+        }
+    }
+    val bitmap = rememberBitmap(b64)
+    val currentFlag by rememberUpdatedState(isCurrent)
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (bitmap != null) {
+            ZoomableImage(
+                bitmap = bitmap,
+                modifier = Modifier.fillMaxSize(),
+                onZoomedChange = { if (currentFlag) onZoomedChange(it) }
+            )
+        } else {
+            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
         }
     }
 }
