@@ -14,6 +14,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.WindowInsets
@@ -1063,7 +1065,109 @@ private fun StatTile(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** Satu halaman di kartu foto (geser kiri-kanan): foto dalam bingkai kaca dengan keterangan melayang. */
+@Composable
+private fun HomePhotoPage(
+    snap: DailySnapshot,
+    now: Long,
+    isPending: Boolean,
+    position: Int,
+    total: Int,
+    onOpen: () -> Unit
+) {
+    val context = LocalContext.current
+    val bitmap = rememberBitmap(snap.imageBase64)
+
+    // Foto lama yang belum diunduh ke HP diambil dari server saat halamannya terlihat.
+    LaunchedEffect(snap.id, snap.imageUrl, snap.imageBase64?.length) {
+        val url = snap.imageUrl
+        if (snap.imageBase64.isNullOrBlank() && !url.isNullOrBlank()) {
+            val bytes = CloudSyncManager.downloadImageBytes(url)
+            if (bytes != null) {
+                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, snap.copy(imageBase64 = b64)) }
+            }
+        }
+    }
+
+    val enter = remember(snap.id) { Animatable(0.92f) }
+    var photoTaps by remember(snap.id) { mutableIntStateOf(0) }
+    val photoWobble = rememberWobble(photoTaps)
+    LaunchedEffect(snap.id) {
+        enter.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow))
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = enter.value
+                scaleY = enter.value
+                rotationZ = photoWobble * 0.4f
+            }
+            .glass(RoundedCornerShape(28.dp), Color.White, fillAlpha = 0.30f, elevation = 14.dp)
+            .padding(5.dp)
+            .bounceClick(pressedScale = 0.97f) { photoTaps++; if (bitmap != null) onOpen() }
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Foto",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(24.dp)),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(SidebyColors.DelicatePink),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
+            }
+        }
+        val who = snap.senderName.ifBlank { null }
+        val whenText = relativeTime(snap.timestamp, now)
+        GlassSurface(
+            shape = RoundedCornerShape(50),
+            color = if (isPending) Color(0xFFFFF4DD).copy(alpha = 0.70f) else Color.White.copy(alpha = 0.58f),
+            shadowElevation = 6.dp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)
+        ) {
+            Text(
+                text = if (isPending) {
+                    if (now - snap.timestamp < 25_000L) "Mengunggah..." else "Belum terkirim, menunggu koneksi"
+                } else listOfNotNull(who, whenText.ifEmpty { null }).joinToString(", "),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                color = if (isPending) SidebyColors.BatteryWarn else SidebyColors.TextDeep,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+            )
+        }
+        if (total > 1) {
+            GlassSurface(
+                shape = RoundedCornerShape(50),
+                color = Color.White.copy(alpha = 0.58f),
+                shadowElevation = 6.dp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+            ) {
+                Text(
+                    "$position / $total",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = SidebyColors.TextDeep,
+                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreenTab() {
     val context = LocalContext.current
@@ -1184,28 +1288,23 @@ fun HomeScreenTab() {
         }
     }
 
-    // Foto terbaru = timestamp paling besar. Tidak lagi memprioritaskan "yang sudah punya base64",
+    // Semua foto, terbaru di urutan pertama. Dipakai untuk kartu geser kiri-kanan.
+    // Foto terbaru = timestamp paling besar, tidak lagi memprioritaskan "yang sudah punya base64",
     // karena itu membuat foto di layar berpindah-pindah saat unduhan selesai.
-    val latestSnapshot = remember(galleryList, partner.snapshot, myStatus.snapshot) {
+    val photoList = remember(galleryList, partner.snapshot, myStatus.snapshot) {
         (galleryList + listOfNotNull(partner.snapshot, myStatus.snapshot))
             .filter { !it.imageBase64.isNullOrBlank() || !it.imageUrl.isNullOrBlank() }
             .groupBy { it.id }
             .map { (_, versions) -> versions.maxByOrNull { it.imageBase64?.length ?: 0 }!! }
-            .maxByOrNull { it.timestamp }
+            .sortedByDescending { it.timestamp }
     }
-    val latestBitmap = rememberBitmap(latestSnapshot?.imageBase64)
-
-    LaunchedEffect(latestSnapshot?.id, latestSnapshot?.imageUrl, latestSnapshot?.imageBase64?.length) {
-        val snap = latestSnapshot ?: return@LaunchedEffect
-        val url = snap.imageUrl
-        if (snap.imageBase64.isNullOrBlank() && !url.isNullOrBlank()) {
-            val bytes = CloudSyncManager.downloadImageBytes(url)
-            if (bytes != null) {
-                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                withContext(Dispatchers.IO) { MobileDataManager.addSnapshotToGallery(context, snap.copy(imageBase64 = b64)) }
-            }
-        }
+    val photoPager = rememberPagerState(pageCount = { photoList.size })
+    val latestId = photoList.firstOrNull()?.id
+    // Ada foto baru masuk: kembali ke foto terbaru.
+    LaunchedEffect(latestId) {
+        if (photoPager.currentPage != 0) photoPager.animateScrollToPage(0)
     }
+    val shownSnapshot = photoList.getOrNull(photoPager.currentPage)
 
     Column(
         modifier = Modifier
@@ -1409,7 +1508,15 @@ fun HomeScreenTab() {
         // ---- Foto ----
         SectionCard(index = 1) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Foto terbaru", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
+                Text(
+                    if (photoPager.currentPage == 0) "Foto terbaru" else "Foto sebelumnya",
+                    fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f)
+                )
+                if (photoPager.currentPage > 0) {
+                    TextButton(onClick = { coroutineScope.launch { photoPager.animateScrollToPage(0) } }) {
+                        Text("Ke terbaru", color = SidebyColors.RosePrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
                 TextButton(onClick = { showGalleryDialog = true }) {
                     Text(
                         if (galleryList.isNotEmpty()) "Galeri (${galleryList.size})" else "Galeri",
@@ -1420,62 +1527,40 @@ fun HomeScreenTab() {
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (latestSnapshot != null && latestBitmap != null) {
-                // Foto masuk dengan sedikit pantulan; keterangan melayang di atasnya sebagai kapsul kaca.
-                val enter = remember { Animatable(0.92f) }
-                var photoTaps by remember { mutableIntStateOf(0) }
-                val photoWobble = rememberWobble(photoTaps)
-                LaunchedEffect(latestSnapshot.id) {
-                    enter.snapTo(0.92f)
-                    enter.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow))
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer {
-                            scaleX = enter.value
-                            scaleY = enter.value
-                            rotationZ = photoWobble * 0.4f
-                        }
-                        .glass(RoundedCornerShape(28.dp), Color.White, fillAlpha = 0.30f, elevation = 14.dp)
-                        .padding(5.dp)
-                        .bounceClick(pressedScale = 0.97f) { photoTaps++; selectedFullPhoto = latestSnapshot }
-                ) {
-                    Image(
-                        bitmap = latestBitmap,
-                        contentDescription = "Foto terbaru",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .clip(RoundedCornerShape(24.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                    val who = latestSnapshot.senderName.ifBlank { null }
-                    val whenText = relativeTime(latestSnapshot.timestamp, now)
-                    val isPending = latestSnapshot.id in pendingIds
-                    GlassSurface(
-                        shape = RoundedCornerShape(50),
-                        color = if (isPending) Color(0xFFFFF4DD).copy(alpha = 0.70f) else Color.White.copy(alpha = 0.58f),
-                        shadowElevation = 6.dp,
-                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)
-                    ) {
-                        Text(
-                            text = if (isPending) {
-                                if (now - latestSnapshot.timestamp < 25_000L) "Mengunggah..." else "Belum terkirim, menunggu koneksi"
-                            }
-                            else listOfNotNull(who, whenText.ifEmpty { null }).joinToString(", "),
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            color = if (isPending) SidebyColors.BatteryWarn else SidebyColors.TextDeep,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+            if (shownSnapshot != null) {
+                HorizontalPager(
+                    state = photoPager,
+                    pageSpacing = 12.dp,
+                    key = { photoList.getOrNull(it)?.id ?: it },
+                    modifier = Modifier.fillMaxWidth()
+                ) { page ->
+                    val snap = photoList.getOrNull(page)
+                    if (snap != null) {
+                        HomePhotoPage(
+                            snap = snap,
+                            now = now,
+                            isPending = snap.id in pendingIds,
+                            position = page + 1,
+                            total = photoList.size,
+                            onOpen = { selectedFullPhoto = snap }
                         )
                     }
                 }
-                val commentCount = chatMessages.count { it.photoId == latestSnapshot.id }
-                val photoReactions = reactions.filter { it.photoId == latestSnapshot.id && it.emoji.isNotBlank() }
+                val commentCount = chatMessages.count { it.photoId == shownSnapshot.id }
+                val photoReactions = reactions.filter { it.photoId == shownSnapshot.id && it.emoji.isNotBlank() }
                 val myDeviceId = remember { MobileDataManager.getMyDeviceId(context) }
+                if (photoList.size > 1) {
+                    Text(
+                        text = if (photoPager.currentPage == 0) "Geser ke kanan untuk melihat foto sebelumnya"
+                        else "Geser untuk foto lain, atau ketuk Ke terbaru",
+                        fontSize = 11.sp,
+                        color = SidebyColors.TextSubtle,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                    TextButton(onClick = { selectedFullPhoto = latestSnapshot }) {
+                    TextButton(onClick = { selectedFullPhoto = shownSnapshot }) {
                         Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = SidebyColors.RosePrimary)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -1505,17 +1590,6 @@ fun HomeScreenTab() {
                             }
                         }
                     }
-                }
-            } else if (latestSnapshot != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(4f / 3f)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(SidebyColors.DelicatePink),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
                 }
             } else {
                 Box(
