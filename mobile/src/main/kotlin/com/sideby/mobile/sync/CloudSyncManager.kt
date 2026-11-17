@@ -61,11 +61,27 @@ object CloudSyncManager {
     private const val MAX_RELAY_PAYLOAD_BYTES = 3600
 
     // Multi-server relay redundancy agar komunikasi antar pasangan selalu lancar tanpa terpengaruh blokir ISP / limit
+    // Server pertama = server milik sendiri (VM): lebih cepat dan menyimpan pesan & foto jauh lebih lama.
+    // Dua server publik di bawahnya tetap dipakai sebagai cadangan, jadi aplikasi tetap jalan walau VM mati.
+    private const val OWN_RELAY = "https://43-157-223-216.sslip.io"
     private val RELAY_SERVERS = listOf(
+        "$OWN_RELAY/sideby-",
         "https://ntfy.sh/sideby-",
         "https://ntfy.envs.net/sideby-"
     )
     val relayServers: List<String> get() = RELAY_SERVERS
+
+    /** Selama masih true, pesan juga disalin ke server publik, supaya HP pasangan yang belum diperbarui tetap menerimanya. */
+    private const val MIRROR_TO_PUBLIC_RELAYS = true
+
+    private fun isOwnRelay(serverBase: String) = serverBase.startsWith(OWN_RELAY)
+
+    /** Seberapa jauh ke belakang pesan yang terlewat boleh diambil: VM menyimpan lama, server publik hanya ~12 jam. */
+    private fun maxCatchUpSeconds(serverBase: String) = if (isOwnRelay(serverBase)) 90L * 24 * 3600 else 11 * 3600L
+
+    /** Waktu terakhir VM gagal dihubungi; sebentar setelah itu server publik didahulukan agar tidak menunggu VM yang mati. */
+    @Volatile private var ownRelayFailedAt = 0L
+    private fun ownRelayLooksDown() = System.currentTimeMillis() - ownRelayFailedAt < 60_000L
 
     // Cegah pesan berulang dari cache ntfy (Deduplikasi Pesan)
     private val processedMessageIds = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
@@ -114,7 +130,8 @@ object CloudSyncManager {
 
     private fun fetchRoomConfigFromSingleServer(serverBase: String, roomCode: String): CoupleRoomConfig? {
         return try {
-            val url = URL("${getRoomUrl(serverBase, roomCode)}/json?poll=1&since=all")
+            // Hanya pesan bertajuk "Sideby CONFIG": riwayat di VM bisa panjang, jadi jangan unduh semuanya.
+            val url = URL("${getRoomUrl(serverBase, roomCode)}/json?poll=1&since=all&title=Sideby%20CONFIG")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = 7000
@@ -202,8 +219,10 @@ object CloudSyncManager {
      * yang pertama berhasil menang. Koneksi yang kalah diputus supaya tidak rebutan bandwidth.
      */
     suspend fun uploadFile(bytes: ByteArray, filename: String, mime: String): String? {
-        val hostCount = 3
-        val order = (0 until hostCount).sortedBy { if (it == preferredUploadHost) -1 else it }
+        val hostCount = 4
+        // 0 = VM sendiri, 1 = ntfy.envs.net, 2 = ntfy.sh, 3 = uguu. VM didahulukan kecuali baru saja gagal.
+        val others = (1 until hostCount).sortedBy { if (it == preferredUploadHost) -1 else it }
+        val order = if (ownRelayLooksDown()) others + 0 else listOf(0) + others
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val connections = java.util.Collections.synchronizedList(mutableListOf<HttpURLConnection>())
         val track: (HttpURLConnection) -> Unit = { connections.add(it) }
@@ -217,13 +236,15 @@ object CloudSyncManager {
                 if (result.isCompleted) return@launch
                 val url = try {
                     when (host) {
-                        0 -> uploadToNtfyServer("https://ntfy.envs.net", bytes, filename, mime, track)
-                        1 -> uploadToNtfyServer("https://ntfy.sh", bytes, filename, mime, track)
+                        0 -> uploadToNtfyServer(OWN_RELAY, bytes, filename, mime, track)
+                        1 -> uploadToNtfyServer("https://ntfy.envs.net", bytes, filename, mime, track)
+                        2 -> uploadToNtfyServer("https://ntfy.sh", bytes, filename, mime, track)
                         else -> uploadToUguu(bytes, filename, mime, track)
                     }
                 } catch (e: Exception) {
                     null
                 }
+                if (host == 0) { if (url.isNullOrBlank()) ownRelayFailedAt = System.currentTimeMillis() else ownRelayFailedAt = 0L }
                 if (!url.isNullOrBlank()) result.complete(host to url)
                 failed[pos].complete(Unit)
                 if (remaining.decrementAndGet() == 0) result.complete(null)
@@ -234,7 +255,7 @@ object CloudSyncManager {
         val deadline = 30_000L + bytes.size / 12L
         try {
             val winner = withTimeoutOrNull(deadline) { result.await() }
-            if (winner != null) preferredUploadHost = winner.first
+            if (winner != null && winner.first != 0) preferredUploadHost = winner.first
             return winner?.second
         } finally {
             scope.cancel()
@@ -522,7 +543,9 @@ object CloudSyncManager {
     private suspend fun sendToRelay(roomCode: String, payload: SyncPayload): Boolean {
         val body = json.encodeToString(payload).toByteArray(Charsets.UTF_8)
         val count = RELAY_SERVERS.size
-        val order = (0 until count).sortedBy { if (it == preferredRelay) -1 else it }
+        // VM (indeks 0) didahulukan; server publik berikutnya diurutkan menurut yang terakhir berhasil.
+        val others = (1 until count).sortedBy { if (it == preferredRelay) -1 else it }
+        val order = if (ownRelayLooksDown()) others + 0 else listOf(0) + others
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val result = CompletableDeferred<Boolean>()
         val failed = List(count) { CompletableDeferred<Unit>() }
@@ -533,9 +556,16 @@ object CloudSyncManager {
                 if (pos > 0) withTimeoutOrNull(RELAY_HEDGE_MS) { failed[pos - 1].await() }
                 if (result.isCompleted) return@launch
                 val ok = postToRelay(RELAY_SERVERS[idx], roomCode, payload.type, body)
+                if (idx == 0) ownRelayFailedAt = if (ok) 0L else System.currentTimeMillis()
                 if (ok) {
-                    preferredRelay = idx
+                    if (idx != 0) preferredRelay = idx
                     result.complete(true)
+                    // Salin ke server publik di latar belakang (tidak ditunggu), supaya HP yang belum diperbarui tetap menerima.
+                    if (idx == 0 && MIRROR_TO_PUBLIC_RELAYS) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            for (i in 1 until count) postToRelay(RELAY_SERVERS[i], roomCode, payload.type, body)
+                        }
+                    }
                 }
                 failed[pos].complete(Unit)
                 if (remaining.decrementAndGet() == 0) result.complete(false)
@@ -600,7 +630,7 @@ object CloudSyncManager {
         // Kursor lama (satu untuk semua relay) dipakai sekali sebagai titik awal agar tidak ada pesan terlewat saat update.
         val cursor = sync.getLong(cursorKey, sync.getLong("last_poll_$room", 0L))
         val sinceParam = if (cursor > 0) {
-            "${(pollStart - cursor + 10).coerceIn(10, 11 * 3600L)}s" // relay menyimpan pesan ~12 jam
+            "${(pollStart - cursor + 10).coerceIn(10, maxCatchUpSeconds(serverBase))}s" // server publik menyimpan ~12 jam, VM jauh lebih lama
         } else {
             "5m"
         }
@@ -645,7 +675,7 @@ object CloudSyncManager {
                 val key = "stream_${roomCode.lowercase().trim()}_${serverTag(serverBase)}"
                 val now = System.currentTimeMillis() / 1000
                 val cursor = sync.getLong(key, 0L)
-                val since = if (cursor > 0) "${(now - cursor + 10).coerceIn(10, 11 * 3600L)}s" else "10s"
+                val since = if (cursor > 0) "${(now - cursor + 10).coerceIn(10, maxCatchUpSeconds(serverBase))}s" else "10s"
                 val c = URL("${getRoomUrl(serverBase, roomCode)}/json?since=$since").openConnection() as HttpURLConnection
                 conn = c
                 c.requestMethod = "GET"
