@@ -14,6 +14,15 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -218,32 +227,34 @@ import androidx.compose.ui.layout.positionInRoot
 // PALET WARNA INTIM & ROMANTIS (HANDCRAFTED)
 // ==========================================
 object SidebyColors {
-    // Palet tenang: latar krem hangat, permukaan putih, satu warna aksen.
-    val RosePrimary = Color(0xFFBF3A55)
-    val RoseGlow = Color(0xFFD25D74)
-    val CoralPeach = Color(0xFFD9806E)
-    val SoftBlush = Color(0xFFF8EEEF)
-    val DelicatePink = Color(0xFFF6F2F0)
-    val CreamCanvas = Color(0xFFFCF7F3)
-    val TextDeep = Color(0xFF211C1E)
-    val TextMuted = Color(0xFF6B6367)
-    val TextSubtle = Color(0xFF9A9195)
-    val GlassBorder = Color(0xFFE8E2DE)
-    val CardSurface = Color.White
-    val TintRose = Color(0xFFFBE8EB)
-    val TintMint = Color(0xFFE6F2EA)
-    val TintSky = Color(0xFFE7EFF5)
-    val TintPeach = Color(0xFFFBEADF)
-    val BatteryOk = Color(0xFF2F8F5B)
-    val BatteryWarn = Color(0xFFD38B1F)
-    val BatteryLow = Color(0xFFC94545)
+    // Palet liquid glass: aksen mawar-ungu yang hidup di atas latar aurora pastel.
+    val RosePrimary = Color(0xFFD9356B)
+    val RoseGlow = Color(0xFFFF6B9A)
+    val CoralPeach = Color(0xFFE2764F)
+    val Violet = Color(0xFF8A5CF5)
+    val SoftBlush = Color(0x80FFD1E1)
+    val DelicatePink = Color(0x59FFFFFF)
+    val CreamCanvas = Color(0xFFF6F0FF)
+    val TextDeep = Color(0xFF1E1635)
+    val TextMuted = Color(0xFF5A5274)
+    val TextSubtle = Color(0xFF8A829F)
+    val GlassBorder = Color(0xB3FFFFFF)
+    val CardSurface = Color(0x6BFFFFFF)
+    val DialogSurface = Color(0xF7FBF8FF)
+    val TintRose = Color(0x66FF9DBF)
+    val TintMint = Color(0x6678E0B0)
+    val TintSky = Color(0x667FC1FF)
+    val TintPeach = Color(0x66FFB890)
+    val BatteryOk = Color(0xFF1F9D63)
+    val BatteryWarn = Color(0xFFD6870F)
+    val BatteryLow = Color(0xFFD13F4B)
     val PastelMint = Color(0xFFEAF4EF)
     val PastelLavender = Color(0xFFF2F0F4)
     val PastelPeach = Color(0xFFF8F0EA)
     val PastelSky = Color(0xFFEDF3F7)
 
-    val BackgroundBrush = Brush.verticalGradient(listOf(CreamCanvas, CreamCanvas))
-    val PrimaryButtonBrush = Brush.horizontalGradient(listOf(RosePrimary, RosePrimary))
+    val BackgroundBrush = Brush.verticalGradient(listOf(Color(0xFFFFF1F6), Color(0xFFF3EDFF), Color(0xFFEAF3FF)))
+    val PrimaryButtonBrush = Brush.linearGradient(listOf(Color(0xFFFF6B9A), RosePrimary, Violet))
     val HeroCardBrush = Brush.linearGradient(listOf(Color.White, Color.White))
 }
 
@@ -271,6 +282,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Layar penuh sampai ke belakang status bar & bilah navigasi supaya latar aurora terlihat utuh.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        )
 
         if (MobileDataManager.isSetupCompleted(this)) {
             SidebyBackgroundSyncService.start(this)
@@ -311,9 +327,11 @@ fun SidebyTheme(content: @Composable () -> Unit) {
         colorScheme = lightColorScheme(
             primary = SidebyColors.RosePrimary,
             onPrimary = Color.White,
-            secondary = SidebyColors.RoseGlow,
+            secondary = SidebyColors.Violet,
             background = SidebyColors.CreamCanvas,
-            surface = SidebyColors.CardSurface,
+            surface = SidebyColors.DialogSurface,
+            surfaceContainerHigh = SidebyColors.DialogSurface,
+            surfaceContainerHighest = SidebyColors.DialogSurface,
             onSurface = SidebyColors.TextDeep,
             onSurfaceVariant = SidebyColors.TextMuted,
             outline = SidebyColors.GlassBorder,
@@ -348,17 +366,15 @@ fun SidebySetupWizardScreen(
     Scaffold(
         containerColor = Color.Transparent
     ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(SidebyColors.BackgroundBrush)
-                .padding(innerPadding)
-        ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            AuroraBackground()
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .padding(innerPadding)
+                    .imePadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 20.dp)
+                    .padding(horizontal = 22.dp, vertical = 20.dp)
             ) {
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -366,21 +382,20 @@ fun SidebySetupWizardScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(SidebyColors.PrimaryButtonBrush),
+                            .size(52.dp)
+                            .glass(CircleShape, SidebyColors.RosePrimary, elevation = 12.dp, glossy = true),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp).heartbeat())
                     }
                     Spacer(modifier = Modifier.width(14.dp))
                     Column {
                         Text(
                             text = "Sideby",
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.ExtraBold,
                             color = SidebyColors.TextDeep,
-                            letterSpacing = (-0.5).sp
+                            letterSpacing = (-0.8).sp
                         )
                         Text(
                             text = "Ruang privat untuk berdua",
@@ -393,10 +408,9 @@ fun SidebySetupWizardScreen(
                 Spacer(modifier = Modifier.height(28.dp))
 
                 // Custom Tab Switcher (Floating Pill Style)
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color.White.copy(alpha = 0.8f),
-                    border = BorderStroke(1.dp, SidebyColors.GlassBorder),
+                GlassSurface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color.White.copy(alpha = 0.40f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -405,10 +419,12 @@ fun SidebySetupWizardScreen(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (selectedSetupTab == 0) SidebyColors.PrimaryButtonBrush else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)))
+                                .then(
+                                    if (selectedSetupTab == 0) Modifier.glass(RoundedCornerShape(22.dp), SidebyColors.RosePrimary, elevation = 8.dp, glossy = true)
+                                    else Modifier.clip(RoundedCornerShape(22.dp))
+                                )
                                 .clickable { selectedSetupTab = 0 }
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 13.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -422,10 +438,12 @@ fun SidebySetupWizardScreen(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(if (selectedSetupTab == 1) SidebyColors.PrimaryButtonBrush else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)))
+                                .then(
+                                    if (selectedSetupTab == 1) Modifier.glass(RoundedCornerShape(22.dp), SidebyColors.RosePrimary, elevation = 8.dp, glossy = true)
+                                    else Modifier.clip(RoundedCornerShape(22.dp))
+                                )
                                 .clickable { selectedSetupTab = 1 }
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 13.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -442,14 +460,12 @@ fun SidebySetupWizardScreen(
 
                 if (selectedSetupTab == 0) {
                     // MODE PEMBUAT ROOM
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                        shadowElevation = 0.dp,
+                    GlassSurface(
+                        shape = RoundedCornerShape(30.dp),
+                        color = Color.White.copy(alpha = 0.40f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(24.dp)) {
+                        Column(modifier = Modifier.padding(22.dp)) {
                             Text("1. Kode Room Kalian", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SidebyColors.TextDeep)
                             Spacer(modifier = Modifier.height(10.dp))
 
@@ -457,23 +473,19 @@ fun SidebySetupWizardScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                OutlinedTextField(
+                                GlassTextField(
                                     value = roomCode,
                                     onValueChange = { roomCode = it.uppercase() },
                                     label = { Text("Kode Unik") },
                                     modifier = Modifier.weight(1f),
                                     shape = RoundedCornerShape(16.dp),
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = SidebyColors.RosePrimary,
-                                        unfocusedBorderColor = SidebyColors.GlassBorder
-                                    )
+                                    singleLine = true
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Button(
+                                GlassButton(
                                     onClick = { roomCode = "SIDEBY-${Random.nextInt(1000, 9999)}" },
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.SoftBlush)
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.TintRose)
                                 ) {
                                     Text("Acak", color = SidebyColors.RosePrimary, fontWeight = FontWeight.Bold)
                                 }
@@ -484,34 +496,26 @@ fun SidebySetupWizardScreen(
                             Text("2. Panggilan Sayang", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SidebyColors.TextDeep)
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            OutlinedTextField(
+                            GlassTextField(
                                 value = myName,
                                 onValueChange = { myName = it },
                                 label = { Text("Nama Panggilan Kamu") },
                                 supportingText = { Text("Nama yang akan tampil di HP pasanganmu") },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = SidebyColors.RosePrimary,
-                                    unfocusedBorderColor = SidebyColors.GlassBorder
-                                )
+                                singleLine = true
                             )
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            OutlinedTextField(
+                            GlassTextField(
                                 value = partnerName,
                                 onValueChange = { partnerName = it },
                                 label = { Text("Nama Panggilan Pasangan") },
                                 supportingText = { Text("Nama pasangan yang akan tampil di HP kamu") },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = SidebyColors.RosePrimary,
-                                    unfocusedBorderColor = SidebyColors.GlassBorder
-                                )
+                                singleLine = true
                             )
 
                             Spacer(modifier = Modifier.height(20.dp))
@@ -543,11 +547,11 @@ fun SidebySetupWizardScreen(
 
                             Spacer(modifier = Modifier.height(28.dp))
 
-                            Button(
+                            GlassButton(
                                 onClick = {
                                     if (myName.isBlank() || partnerName.isBlank()) {
                                         Toast.makeText(context, "Silakan isi nama panggilan terlebih dahulu!", Toast.LENGTH_SHORT).show()
-                                        return@Button
+                                        return@GlassButton
                                     }
                                     val config = CoupleRoomConfig(
                                         roomCode = roomCode,
@@ -570,8 +574,8 @@ fun SidebySetupWizardScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                shape = RoundedCornerShape(18.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                                shape = RoundedCornerShape(27.dp),
+                                colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                             ) {
                                 Text(
                                     text = "Buat room",
@@ -584,14 +588,12 @@ fun SidebySetupWizardScreen(
                     }
                 } else {
                     // MODE GABUNG ROOM (PACAR TINGGAL PAKAI)
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                        shadowElevation = 0.dp,
+                    GlassSurface(
+                        shape = RoundedCornerShape(30.dp),
+                        color = Color.White.copy(alpha = 0.40f),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(24.dp)) {
+                        Column(modifier = Modifier.padding(22.dp)) {
                             Text(
                                 text = "Gabung ke Room Pacar",
                                 fontWeight = FontWeight.Bold,
@@ -608,27 +610,23 @@ fun SidebySetupWizardScreen(
 
                             Spacer(modifier = Modifier.height(20.dp))
 
-                            OutlinedTextField(
+                            GlassTextField(
                                 value = joinRoomCode,
                                 onValueChange = { joinRoomCode = it.uppercase() },
                                 label = { Text("Kode Room") },
                                 supportingText = { Text("Masukkan kode room yang diberikan pasanganmu") },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(16.dp),
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = SidebyColors.RosePrimary,
-                                    unfocusedBorderColor = SidebyColors.GlassBorder
-                                )
+                                singleLine = true
                             )
 
                             Spacer(modifier = Modifier.height(24.dp))
 
-                            Button(
+                            GlassButton(
                                 onClick = {
                                     if (joinRoomCode.isBlank()) {
                                         Toast.makeText(context, "Silakan masukkan kode room!", Toast.LENGTH_SHORT).show()
-                                        return@Button
+                                        return@GlassButton
                                     }
                                     isJoiningLoading = true
                                     coroutineScope.launch {
@@ -660,8 +658,8 @@ fun SidebySetupWizardScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(54.dp),
-                                shape = RoundedCornerShape(18.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                                shape = RoundedCornerShape(27.dp),
+                                colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                             ) {
                                 if (isJoiningLoading) {
                                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
@@ -701,7 +699,7 @@ fun DatePickerField(
         "Pilih tanggal..."
     }
 
-    OutlinedTextField(
+    GlassTextField(
         value = displayString,
         onValueChange = {},
         label = { Text(label) },
@@ -741,11 +739,7 @@ fun DatePickerField(
                     calendar.get(Calendar.DAY_OF_MONTH)
                 ).show()
             },
-        shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = SidebyColors.RosePrimary,
-            unfocusedBorderColor = SidebyColors.GlassBorder
-        )
+        shape = RoundedCornerShape(16.dp)
     )
 }
 
@@ -871,129 +865,113 @@ fun SidebyMainApp(
         }
     }
 
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    // Ruang yang diambil bilah navigasi melayang; isi tiap halaman memberi jarak sebesar ini di bawahnya.
+    val bottomInset = if (imeVisible) 0.dp else GlassNavBarHeight + GlassNavBarOuterPadding * 2 + navInset
+
     HeartBurstHost {
-    Scaffold(
-        containerColor = SidebyColors.CreamCanvas,
-        topBar = {
+    CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        AuroraBackground()
+
+        Column(modifier = Modifier.fillMaxSize().imePadding()) {
             val myName = remember { MobileDataManager.getMyStatus(context).name }
             val days = remember { MobileDataManager.getDaysTogether(context) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 20.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
+                    .statusBarsPadding()
+                    .padding(start = 22.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Halo, $myName",
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 26.sp,
+                        letterSpacing = (-0.6).sp,
                         color = SidebyColors.TextDeep,
                         maxLines = 1
                     )
                     Text(
                         text = if (days > 0) "Hari ke-$days bersama" else "Room ${MobileDataManager.getRoomCode(context)}",
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
                         color = SidebyColors.TextMuted
                     )
                 }
-                Surface(
+                GlassSurface(
                     shape = RoundedCornerShape(50),
-                    color = SidebyColors.TintRose,
+                    color = Color.White.copy(alpha = 0.45f),
+                    shadowElevation = 8.dp,
                     modifier = Modifier.heartBurstClick(count = 9)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(14.dp).heartbeat())
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(MobileDataManager.getRoomCode(context), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = SidebyColors.RosePrimary)
+                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(15.dp).heartbeat())
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(MobileDataManager.getRoomCode(context), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
                     }
                 }
             }
-        },
-        bottomBar = {
-            Column {
-                HorizontalDivider(color = SidebyColors.GlassBorder)
-                NavigationBar(
-                    containerColor = Color.White,
-                    tonalElevation = 0.dp
-                ) {
-                    val items = listOf(
-                        Triple("Berdua", Icons.Outlined.Home, Icons.Filled.Home),
-                        Triple("Chat", Icons.Outlined.ChatBubbleOutline, Icons.Filled.ChatBubble),
-                        Triple("Jarak", Icons.Outlined.Place, Icons.Filled.Place),
-                        Triple("Momen", Icons.Outlined.FavoriteBorder, Icons.Filled.Favorite),
-                        Triple("Setelan", Icons.Outlined.Settings, Icons.Filled.Settings)
-                    )
-                    items.forEachIndexed { index, (label, outlined, filled) ->
-                        NavigationBarItem(
-                            selected = currentTab == index,
-                            onClick = { currentTab = index },
-                            icon = {
-                                BadgedBox(badge = {
-                                    if (index == 1 && unreadChat > 0 && currentTab != 1) {
-                                        Badge(containerColor = SidebyColors.RosePrimary) { Text(if (unreadChat > 9) "9+" else "$unreadChat") }
-                                    }
-                                }) {
-                                    val iconScale by animateFloatAsState(
-                                        targetValue = if (currentTab == index) 1.22f else 1f,
-                                        animationSpec = spring(dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMediumLow),
-                                        label = "navIconScale"
-                                    )
-                                    Icon(
-                                        if (currentTab == index) filled else outlined,
-                                        contentDescription = label,
-                                        modifier = Modifier.graphicsLayer { scaleX = iconScale; scaleY = iconScale }
-                                    )
-                                }
-                            },
-                            label = { Text(label, fontSize = 12.sp) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = SidebyColors.RosePrimary,
-                                selectedTextColor = SidebyColors.RosePrimary,
-                                indicatorColor = SidebyColors.SoftBlush,
-                                unselectedIconColor = SidebyColors.TextMuted,
-                                unselectedTextColor = SidebyColors.TextMuted
-                            )
-                        )
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                // Pindah tab: konten baru menyelinap dari arah tab yang dituju, yang lama memudar ke sisi sebaliknya.
+                AnimatedContent(
+                    targetState = currentTab,
+                    transitionSpec = {
+                        val dir = if (targetState > initialState) 1 else -1
+                        (slideInHorizontally(
+                            animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
+                            initialOffsetX = { it / 7 * dir }
+                        ) + fadeIn(tween(220, delayMillis = 60))) togetherWith
+                            (slideOutHorizontally(
+                                animationSpec = tween(180),
+                                targetOffsetX = { -it / 10 * dir }
+                            ) + fadeOut(tween(140)))
+                    },
+                    label = "tabContent"
+                ) { tab ->
+                    when (tab) {
+                        0 -> HomeScreenTab()
+                        1 -> ChatScreenTab()
+                        2 -> RadarScreenTab()
+                        3 -> MemoriesScreenTab()
+                        4 -> SettingsScreenTab(onResetSetup = onResetSetup)
                     }
                 }
             }
         }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            // Pindah tab: konten baru menyelinap dari arah tab yang dituju, yang lama memudar ke sisi sebaliknya.
-            AnimatedContent(
-                targetState = currentTab,
-                transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(
-                        animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow),
-                        initialOffsetX = { it / 7 * dir }
-                    ) + fadeIn(tween(220, delayMillis = 60))) togetherWith
-                        (slideOutHorizontally(
-                            animationSpec = tween(180),
-                            targetOffsetX = { -it / 10 * dir }
-                        ) + fadeOut(tween(140)))
-                },
-                label = "tabContent"
-            ) { tab ->
-                when (tab) {
-                    0 -> HomeScreenTab()
-                    1 -> ChatScreenTab()
-                    2 -> RadarScreenTab()
-                    3 -> MemoriesScreenTab()
-                    4 -> SettingsScreenTab(onResetSetup = onResetSetup)
-                }
-            }
+
+        // Bilah navigasi kaca melayang, dengan pudar halus di belakangnya supaya isi yang tergulir tidak bertabrakan.
+        if (!imeVisible) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(bottomInset + 24.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, AuroraBottom.copy(alpha = 0.92f))))
+            )
+            GlassNavBar(
+                items = listOf(
+                    GlassNavItem("Berdua", Icons.Outlined.Home, Icons.Filled.Home),
+                    GlassNavItem("Chat", Icons.Outlined.ChatBubbleOutline, Icons.Filled.ChatBubble),
+                    GlassNavItem("Jarak", Icons.Outlined.Place, Icons.Filled.Place),
+                    GlassNavItem("Momen", Icons.Outlined.FavoriteBorder, Icons.Filled.Favorite),
+                    GlassNavItem("Setelan", Icons.Outlined.Settings, Icons.Filled.Settings)
+                ),
+                selected = currentTab,
+                onSelect = { currentTab = it },
+                badgeIndex = 1,
+                badgeCount = unreadChat,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
         }
+    }
     }
     } // HeartBurstHost
 }
@@ -1030,13 +1008,13 @@ private fun SectionCard(
     index: Int = 0,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Surface(
+    GlassSurface(
         modifier = modifier.fillMaxWidth().popIn(index),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(28.dp),
         color = SidebyColors.CardSurface,
-        border = BorderStroke(1.dp, SidebyColors.GlassBorder)
+        shadowElevation = 10.dp
     ) {
-        Column(modifier = Modifier.padding(16.dp), content = content)
+        Column(modifier = Modifier.padding(18.dp), content = content)
     }
 }
 
@@ -1051,11 +1029,11 @@ private fun StatTile(
     progress: Float? = null,
     progressColor: Color = iconColor
 ) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(14.dp), color = tint) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    GlassSurface(modifier = modifier, shape = RoundedCornerShape(20.dp), color = tint, shadowElevation = 0.dp) {
+        Column(modifier = Modifier.padding(13.dp)) {
             Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(20.dp))
             Spacer(modifier = Modifier.height(8.dp))
-            Text(value, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, maxLines = 1)
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = SidebyColors.TextDeep, maxLines = 1)
             Text(label, fontSize = 12.sp, color = SidebyColors.TextMuted, maxLines = 1)
             if (progress != null) {
                 // Bar baterai mengisi dengan pantulan, dan bergeser halus saat persennya berubah.
@@ -1070,7 +1048,7 @@ private fun StatTile(
                         .fillMaxWidth()
                         .height(5.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(Color.White.copy(alpha = 0.7f))
+                        .background(Color.White.copy(alpha = 0.55f))
                 ) {
                     Box(
                         modifier = Modifier
@@ -1237,10 +1215,11 @@ fun HomeScreenTab() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         if (!partner.isConnected) {
-            Surface(
+            GlassSurface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = SidebyColors.SoftBlush
+                shape = RoundedCornerShape(22.dp),
+                color = SidebyColors.SoftBlush,
+                shadowElevation = 6.dp
             ) {
                 Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
                     Icon(Icons.Outlined.Info, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(20.dp))
@@ -1259,23 +1238,23 @@ fun HomeScreenTab() {
         }
 
         // ---- Pasangan ----
-        Surface(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth().popIn(0),
-            shape = RoundedCornerShape(20.dp),
-            color = SidebyColors.TintRose
+            shape = RoundedCornerShape(32.dp),
+            color = SidebyColors.TintRose,
+            shadowElevation = 12.dp
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Avatar mengambang pelan; diketuk = goyang + hati melayang. Emoji mood berganti dengan efek pantul.
                     var avatarTaps by remember { mutableIntStateOf(0) }
                     val wobble = rememberWobble(avatarTaps)
                     Box(
                         modifier = Modifier
-                            .size(60.dp)
+                            .size(64.dp)
                             .floating(amplitudeDp = 3f)
                             .graphicsLayer { rotationZ = wobble }
-                            .clip(CircleShape)
-                            .background(Color.White)
+                            .glass(CircleShape, Color.White, fillAlpha = 0.55f, elevation = 10.dp)
                             .heartBurstClick(count = 7) { avatarTaps++ },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1292,9 +1271,9 @@ fun HomeScreenTab() {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             partner.name,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 25.sp,
+                            letterSpacing = (-0.5).sp,
                             color = SidebyColors.TextDeep,
                             maxLines = 1
                         )
@@ -1334,7 +1313,11 @@ fun HomeScreenTab() {
                 Spacer(modifier = Modifier.height(14.dp))
 
                 // Mood + catatan sebagai balon pesan
-                Surface(shape = RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp), color = Color.White) {
+                GlassSurface(
+                    shape = RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 22.dp),
+                    color = Color.White.copy(alpha = 0.50f),
+                    shadowElevation = 4.dp
+                ) {
                     Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
                         if (partner.isConnected) {
                             Text(partner.mood.label, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = SidebyColors.RosePrimary)
@@ -1350,8 +1333,8 @@ fun HomeScreenTab() {
                             ) { note ->
                                 Text(
                                     text = if (note.isNotBlank()) "\u201C$note\u201D" else "Belum ada catatan",
-                                    fontFamily = FontFamily.Serif,
                                     fontStyle = if (note.isNotBlank()) FontStyle.Italic else FontStyle.Normal,
+                                    fontWeight = FontWeight.Medium,
                                     fontSize = 16.sp,
                                     lineHeight = 23.sp,
                                     color = if (note.isNotBlank()) SidebyColors.TextDeep else SidebyColors.TextSubtle
@@ -1426,7 +1409,7 @@ fun HomeScreenTab() {
         // ---- Foto ----
         SectionCard(index = 1) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Foto terbaru", fontFamily = FontFamily.Serif, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
+                Text("Foto terbaru", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
                 TextButton(onClick = { showGalleryDialog = true }) {
                     Text(
                         if (galleryList.isNotEmpty()) "Galeri (${galleryList.size})" else "Galeri",
@@ -1438,50 +1421,54 @@ fun HomeScreenTab() {
             Spacer(modifier = Modifier.height(8.dp))
 
             if (latestSnapshot != null && latestBitmap != null) {
-                // Foto baru "digantung" dan berayun beberapa kali sebelum diam miring tipis.
-                val swing = remember { Animatable(-8f) }
+                // Foto masuk dengan sedikit pantulan; keterangan melayang di atasnya sebagai kapsul kaca.
+                val enter = remember { Animatable(0.92f) }
                 var photoTaps by remember { mutableIntStateOf(0) }
                 val photoWobble = rememberWobble(photoTaps)
                 LaunchedEffect(latestSnapshot.id) {
-                    swing.snapTo(-8f)
-                    swing.animateTo(-1.2f, spring(dampingRatio = 0.22f, stiffness = Spring.StiffnessVeryLow))
+                    enter.snapTo(0.92f)
+                    enter.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessLow))
                 }
-                Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
-                    Surface(
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = enter.value
+                            scaleY = enter.value
+                            rotationZ = photoWobble * 0.4f
+                        }
+                        .glass(RoundedCornerShape(28.dp), Color.White, fillAlpha = 0.30f, elevation = 14.dp)
+                        .padding(5.dp)
+                        .bounceClick(pressedScale = 0.97f) { photoTaps++; selectedFullPhoto = latestSnapshot }
+                ) {
+                    Image(
+                        bitmap = latestBitmap,
+                        contentDescription = "Foto terbaru",
                         modifier = Modifier
                             .fillMaxWidth()
-                            .graphicsLayer {
-                                rotationZ = swing.value + photoWobble * 0.4f
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
-                            }
-                            .bounceClick(pressedScale = 0.97f) { photoTaps++; selectedFullPhoto = latestSnapshot },
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                        shadowElevation = 3.dp
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(24.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                    val who = latestSnapshot.senderName.ifBlank { null }
+                    val whenText = relativeTime(latestSnapshot.timestamp, now)
+                    val isPending = latestSnapshot.id in pendingIds
+                    GlassSurface(
+                        shape = RoundedCornerShape(50),
+                        color = if (isPending) Color(0xFFFFF4DD).copy(alpha = 0.70f) else Color.White.copy(alpha = 0.58f),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 12.dp)) {
-                            Image(
-                                bitmap = latestBitmap,
-                                contentDescription = "Foto terbaru",
-                                modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-                                contentScale = ContentScale.Crop
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            val who = latestSnapshot.senderName.ifBlank { null }
-                            val whenText = relativeTime(latestSnapshot.timestamp, now)
-                            val isPending = latestSnapshot.id in pendingIds
-                            Text(
-                                text = if (isPending) {
-                                    if (now - latestSnapshot.timestamp < 25_000L) "Mengunggah..." else "Belum terkirim, menunggu koneksi"
-                                }
-                                else listOfNotNull(who, whenText.ifEmpty { null }).joinToString(", "),
-                                fontFamily = FontFamily.Serif,
-                                fontStyle = FontStyle.Italic,
-                                fontSize = 14.sp,
-                                color = if (isPending) SidebyColors.BatteryWarn else SidebyColors.TextMuted
-                            )
-                        }
+                        Text(
+                            text = if (isPending) {
+                                if (now - latestSnapshot.timestamp < 25_000L) "Mengunggah..." else "Belum terkirim, menunggu koneksi"
+                            }
+                            else listOfNotNull(who, whenText.ifEmpty { null }).joinToString(", "),
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = if (isPending) SidebyColors.BatteryWarn else SidebyColors.TextDeep,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                        )
                     }
                 }
                 val commentCount = chatMessages.count { it.photoId == latestSnapshot.id }
@@ -1503,9 +1490,10 @@ fun HomeScreenTab() {
                         androidx.compose.runtime.key(r.senderId, r.emoji) {
                             val pop = remember { Animatable(0.3f) }
                             LaunchedEffect(Unit) { pop.animateTo(1f, spring(dampingRatio = 0.35f, stiffness = Spring.StiffnessMedium)) }
-                            Surface(
+                            GlassSurface(
                                 shape = RoundedCornerShape(50),
                                 color = SidebyColors.TintRose,
+                                shadowElevation = 4.dp,
                                 modifier = Modifier.padding(start = 6.dp).graphicsLayer { scaleX = pop.value; scaleY = pop.value }
                             ) {
                                 Text(
@@ -1523,7 +1511,7 @@ fun HomeScreenTab() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(4f / 3f)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(24.dp))
                         .background(SidebyColors.DelicatePink),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1533,8 +1521,8 @@ fun HomeScreenTab() {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(110.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .height(120.dp)
+                        .clip(RoundedCornerShape(24.dp))
                         .background(SidebyColors.DelicatePink),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1543,21 +1531,20 @@ fun HomeScreenTab() {
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Button(
+            GlassButton(
                 onClick = { showPhotoSourceDialog = true },
-                modifier = Modifier.fillMaxWidth().height(46.dp).pressBounce(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.TintRose, contentColor = SidebyColors.RosePrimary)
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(26.dp)
             ) {
-                Icon(Icons.Outlined.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.PhotoCamera, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Kirim foto", fontWeight = FontWeight.SemiBold)
+                Text("Kirim foto", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
 
         // ---- Status saya ----
         SectionCard(index = 2) {
-            Text("Status kamu", fontFamily = FontFamily.Serif, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
+            Text("Status kamu", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
             Spacer(modifier = Modifier.height(2.dp))
             Text("Yang kamu pilih di sini muncul di layar ${partner.name}.", fontSize = 13.sp, color = SidebyColors.TextMuted)
             Spacer(modifier = Modifier.height(12.dp))
@@ -1577,15 +1564,17 @@ fun HomeScreenTab() {
                         selected = selectedMood == mood,
                         onClick = { selectedMood = mood },
                         label = { Text("${mood.emoji} ${mood.label}", fontSize = 13.sp) },
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(50),
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = SidebyColors.TintRose,
+                            containerColor = Color.White.copy(alpha = 0.40f),
+                            labelColor = SidebyColors.TextDeep,
+                            selectedContainerColor = SidebyColors.RosePrimary.copy(alpha = 0.22f),
                             selectedLabelColor = SidebyColors.RosePrimary
                         ),
                         border = FilterChipDefaults.filterChipBorder(
                             enabled = true,
                             selected = selectedMood == mood,
-                            borderColor = SidebyColors.GlassBorder,
+                            borderColor = Color.White.copy(alpha = 0.9f),
                             selectedBorderColor = SidebyColors.RosePrimary
                         )
                     )
@@ -1594,20 +1583,15 @@ fun HomeScreenTab() {
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            OutlinedTextField(
+            GlassTextField(
                 value = noteInput,
                 onValueChange = { if (it.length <= 80) noteInput = it },
                 label = { Text("Catatan singkat (opsional)") },
                 supportingText = { Text("${noteInput.length}/80") },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(18.dp),
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = SidebyColors.RosePrimary,
-                    unfocusedBorderColor = SidebyColors.GlassBorder,
-                    focusedLabelColor = SidebyColors.RosePrimary
-                )
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1615,7 +1599,7 @@ fun HomeScreenTab() {
             val dirty = selectedMood != myStatus.mood || noteInput.trim() != myStatus.customNote
             val burstHost = LocalHeartBurst.current
             var saveCenter by remember { mutableStateOf(Offset.Zero) }
-            Button(
+            GlassButton(
                 onClick = {
                     isSaving = true
                     val mood = selectedMood
@@ -1641,16 +1625,16 @@ fun HomeScreenTab() {
                 enabled = dirty && !isSaving,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(52.dp)
                     .onGloballyPositioned {
                         val pos = it.positionInRoot()
                         saveCenter = Offset(pos.x + it.size.width / 2f, pos.y + it.size.height / 2f)
                     }
-                    .pressBounce(),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
+                    ,
+                shape = RoundedCornerShape(24.dp),
+                colors = GlassButtonDefaults.buttonColors(
                     containerColor = SidebyColors.RosePrimary,
-                    disabledContainerColor = SidebyColors.GlassBorder
+                    disabledContainerColor = Color.White.copy(alpha = 0.45f)
                 )
             ) {
                 if (isSaving) {
@@ -1661,7 +1645,7 @@ fun HomeScreenTab() {
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(LocalBottomBarInset.current))
     }
 
     // ---- Pilih sumber foto ----
@@ -1680,7 +1664,8 @@ fun HomeScreenTab() {
                     Text("Pilih dari galeri", color = SidebyColors.RosePrimary)
                 }
             },
-            containerColor = Color.White
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp)
         )
     }
 
@@ -1691,16 +1676,17 @@ fun HomeScreenTab() {
             onDismissRequest = { showGalleryDialog = false },
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            Surface(
+            GlassSurface(
                 modifier = Modifier
                     .fillMaxWidth(0.94f)
                     .fillMaxHeight(0.82f),
-                shape = RoundedCornerShape(16.dp),
-                color = Color.White
+                shape = RoundedCornerShape(32.dp),
+                color = Color.White.copy(alpha = 0.72f),
+                shadowElevation = 20.dp
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Galeri (${galleryList.size})", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
+                        Text("Galeri (${galleryList.size})", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f))
                         IconButton(onClick = { showGalleryDialog = false }) {
                             Icon(Icons.Default.Close, contentDescription = "Tutup", tint = SidebyColors.TextDeep)
                         }
@@ -1733,7 +1719,7 @@ fun HomeScreenTab() {
                                 Box(
                                     modifier = Modifier
                                         .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(RoundedCornerShape(18.dp))
                                         .background(SidebyColors.DelicatePink)
                                         .clickable { selectedFullPhoto = item },
                                     contentAlignment = Alignment.Center
@@ -1745,10 +1731,11 @@ fun HomeScreenTab() {
                                     }
                                     val badge = reactions.filter { it.photoId == item.id && it.emoji.isNotBlank() }.joinToString("") { it.emoji }
                                     if (badge.isNotEmpty()) {
-                                        Surface(
+                                        GlassSurface(
                                             shape = RoundedCornerShape(50),
-                                            color = Color.White.copy(alpha = 0.9f),
-                                            modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
+                                            color = Color.White.copy(alpha = 0.70f),
+                                            shadowElevation = 2.dp,
+                                            modifier = Modifier.align(Alignment.BottomEnd).padding(5.dp)
                                         ) {
                                             Text(badge, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp))
                                         }
@@ -1788,7 +1775,8 @@ fun UpdateDialog(info: UpdateInfo, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = { if (progress == null) onDismiss() },
-        containerColor = Color.White,
+        containerColor = SidebyColors.DialogSurface,
+        shape = RoundedCornerShape(30.dp),
         title = { Text("Versi ${info.versionName} tersedia", fontWeight = FontWeight.SemiBold) },
         text = {
             Column {
@@ -1823,14 +1811,14 @@ fun UpdateDialog(info: UpdateInfo, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(
+            GlassButton(
                 enabled = progress == null,
-                colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary),
+                colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary),
                 onClick = {
                     if (!UpdateManager.canInstallPackages(context)) {
                         needPermission = true
                         UpdateManager.openInstallPermissionSettings(context)
-                        return@Button
+                        return@GlassButton
                     }
                     needPermission = false
                     error = null
@@ -1863,7 +1851,7 @@ private fun UpdateCard() {
     var available by remember { mutableStateOf<UpdateInfo?>(null) }
 
     SectionCard {
-        Text("Pembaruan aplikasi", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = SidebyColors.TextDeep)
+        Text("Pembaruan aplikasi", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = SidebyColors.TextDeep)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             message ?: "Cek apakah ada versi Sideby yang lebih baru.",
@@ -1871,7 +1859,7 @@ private fun UpdateCard() {
             color = SidebyColors.TextMuted
         )
         Spacer(modifier = Modifier.height(12.dp))
-        OutlinedButton(
+        GlassOutlinedButton(
             onClick = {
                 checking = true
                 message = null
@@ -1889,8 +1877,7 @@ private fun UpdateCard() {
             },
             enabled = !checking,
             modifier = Modifier.fillMaxWidth().height(46.dp),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, SidebyColors.GlassBorder)
+            shape = RoundedCornerShape(24.dp)
         ) {
             if (checking) {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
@@ -2026,8 +2013,7 @@ internal fun ChatInputBar(
             Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(SidebyColors.GlassBorder)
+                    .glass(CircleShape, Color.White, fillAlpha = 0.50f, elevation = 6.dp)
                     .bounceClick(pressedScale = 0.88f) {
                         recording = false
                         recorder.cancel()
@@ -2037,10 +2023,11 @@ internal fun ChatInputBar(
                 Icon(Icons.Filled.Delete, contentDescription = "Batalkan rekaman", tint = SidebyColors.TextMuted, modifier = Modifier.size(22.dp))
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Surface(
+            GlassSurface(
                 modifier = Modifier.weight(1f).height(48.dp),
                 shape = RoundedCornerShape(24.dp),
-                color = SidebyColors.TintRose
+                color = SidebyColors.TintRose,
+                shadowElevation = 6.dp
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -2093,8 +2080,7 @@ internal fun ChatInputBar(
             Box(
                 modifier = Modifier
                     .size(48.dp)
-                    .clip(CircleShape)
-                    .background(SidebyColors.RosePrimary)
+                    .glass(CircleShape, SidebyColors.RosePrimary, elevation = 10.dp, glossy = true)
                     .bounceClick(pressedScale = 0.86f) { finishRecording() },
                 contentAlignment = Alignment.Center
             ) {
@@ -2105,20 +2091,14 @@ internal fun ChatInputBar(
     }
 
     Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
+        GlassTextField(
             value = value,
             onValueChange = { if (it.length <= ChatMessage.MAX_TEXT_LENGTH) onValueChange(it) },
             placeholder = { Text(placeholder, color = SidebyColors.TextSubtle) },
             modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(26.dp),
             maxLines = 4,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = SidebyColors.RosePrimary,
-                unfocusedBorderColor = SidebyColors.GlassBorder,
-                unfocusedContainerColor = Color.White,
-                focusedContainerColor = Color.White
-            )
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default)
         )
         Spacer(modifier = Modifier.width(8.dp))
         val enabled = value.isNotBlank()
@@ -2136,12 +2116,11 @@ internal fun ChatInputBar(
                 .padding(bottom = 4.dp)
                 .size(48.dp)
                 .graphicsLayer { scaleX = buttonScale; scaleY = buttonScale }
-                .clip(CircleShape)
-                .background(
+                .then(
                     when {
-                        enabled -> SidebyColors.RosePrimary
-                        showMic -> SidebyColors.TintRose
-                        else -> SidebyColors.GlassBorder
+                        enabled -> Modifier.glass(CircleShape, SidebyColors.RosePrimary, elevation = 10.dp, glossy = true)
+                        showMic -> Modifier.glass(CircleShape, Color.White, fillAlpha = 0.50f, elevation = 6.dp)
+                        else -> Modifier.glass(CircleShape, Color.White, fillAlpha = 0.30f, elevation = 0.dp)
                     }
                 )
                 .then(
@@ -2258,7 +2237,7 @@ fun ChatScreenTab() {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = SidebyColors.RosePrimary.copy(alpha = 0.6f), modifier = Modifier.size(44.dp).floating(amplitudeDp = 5f))
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("Belum ada pesan", fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SidebyColors.TextDeep)
+                    Text("Belum ada pesan", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = SidebyColors.TextDeep)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "Mulai dengan menyapa $partnerName, atau balas fotonya dari halaman Berdua.",
@@ -2297,8 +2276,8 @@ fun ChatScreenTab() {
             }
         }
 
-        Surface(color = SidebyColors.CreamCanvas) {
-            Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        run {
+            Box(modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 6.dp + LocalBottomBarInset.current)) {
                 ChatInputBar(
                     value = input,
                     onValueChange = { input = it },
@@ -2317,7 +2296,7 @@ fun ChatScreenTab() {
 
 @Composable
 private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, onPhotoClick: () -> Unit = {}) {
-    val bubbleShape = if (mine) RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
+    val bubbleShape = if (mine) RoundedCornerShape(24.dp, 24.dp, 6.dp, 24.dp) else RoundedCornerShape(24.dp, 24.dp, 24.dp, 6.dp)
     // Hanya pesan yang baru masuk (beberapa detik terakhir) yang "meletus" muncul dari sudut balonnya;
     // riwayat lama tampil biasa supaya tidak heboh saat membuka chat.
     val fresh = remember(msg.id) { System.currentTimeMillis() - msg.timestamp < 4_000L }
@@ -2337,10 +2316,11 @@ private fun ChatBubble(msg: ChatMessage, mine: Boolean, photo: DailySnapshot?, o
             },
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start
     ) {
-        Surface(
+        GlassSurface(
             shape = bubbleShape,
-            color = if (mine) SidebyColors.RosePrimary else Color.White,
-            border = if (mine) null else BorderStroke(1.dp, SidebyColors.GlassBorder),
+            color = if (mine) SidebyColors.RosePrimary else Color.White.copy(alpha = 0.55f),
+            glossy = mine,
+            shadowElevation = 6.dp,
             modifier = Modifier.widthIn(max = 290.dp)
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
@@ -2540,7 +2520,7 @@ fun RadarScreenTab() {
         SectionCard(index = 0) {
             Text("Jarak dengan ${partner.name}", fontSize = 13.sp, color = SidebyColors.TextMuted)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(headline, fontFamily = FontFamily.Serif, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
+            Text(headline, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
             Spacer(modifier = Modifier.height(4.dp))
             Text(detail, fontSize = 14.sp, color = SidebyColors.TextMuted, lineHeight = 20.sp)
         }
@@ -2552,9 +2532,8 @@ fun RadarScreenTab() {
             ) {
                 Box(
                     modifier = Modifier
-                        .size(220.dp)
-                        .clip(CircleShape)
-                        .background(SidebyColors.DelicatePink),
+                        .size(230.dp)
+                        .glass(CircleShape, Color.White, fillAlpha = 0.30f, elevation = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -2575,7 +2554,7 @@ fun RadarScreenTab() {
                         )
                     }
                     Box(
-                        modifier = Modifier.size(40.dp).heartbeat(2200).clip(CircleShape).background(SidebyColors.RosePrimary),
+                        modifier = Modifier.size(44.dp).heartbeat(2200).glass(CircleShape, SidebyColors.RosePrimary, elevation = 10.dp, glossy = true),
                         contentAlignment = Alignment.Center
                     ) {
                         Text("Kamu", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
@@ -2587,9 +2566,7 @@ fun RadarScreenTab() {
                                 .align(if (partner.location.isNearby) Alignment.BottomCenter else Alignment.TopEnd)
                                 .padding(if (partner.location.isNearby) 14.dp else 22.dp)
                                 .floating(amplitudeDp = 4f, periodMillis = 2200)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                                .border(1.5.dp, SidebyColors.RosePrimary, CircleShape),
+                                .glass(CircleShape, Color.White, fillAlpha = 0.60f, elevation = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(partner.mood.emoji, fontSize = 20.sp)
@@ -2615,7 +2592,7 @@ fun RadarScreenTab() {
                 lineHeight = 19.sp
             )
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(LocalBottomBarInset.current))
     }
 }
 
@@ -2638,35 +2615,39 @@ fun MemoriesScreenTab() {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(bottom = LocalBottomBarInset.current)
     ) {
         // 1. HERO MILESTONE KISAH KITA
         item {
-            Surface(
+            GlassSurface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = Color.Transparent,
-                shadowElevation = 0.dp
+                shape = RoundedCornerShape(36.dp),
+                color = SidebyColors.RosePrimary,
+                glossy = true,
+                shadowElevation = 18.dp
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(SidebyColors.RosePrimary)
-                        .padding(22.dp),
+                        .padding(vertical = 30.dp, horizontal = 22.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(20.dp).heartbeat())
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = if (daysTogether > 0) "$daysTogether" else "-",
                             color = Color.White,
-                            fontFamily = FontFamily.Serif,
-                            fontSize = 48.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = 64.sp,
+                            letterSpacing = (-2).sp,
+                            fontWeight = FontWeight.ExtraBold
                         )
                         Text(
                             text = if (daysTogether > 0) "hari bersama" else "Tanggal jadian belum diisi",
-                            color = Color.White.copy(alpha = 0.9f),
-                            fontSize = 14.sp
+                            color = Color.White.copy(alpha = 0.92f),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
@@ -2677,11 +2658,11 @@ fun MemoriesScreenTab() {
         // BANNER KENCAN AKTIF
         if (partner.location.isNearby || MobileDataManager.getActiveSessionStartTime(context) > 0L) {
             item {
-                Surface(
+                GlassSurface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(24.dp),
                     color = SidebyColors.SoftBlush,
                     border = BorderStroke(1.dp, SidebyColors.GlassBorder)
                 ) {
@@ -2717,10 +2698,10 @@ fun MemoriesScreenTab() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Riwayat ketemuan", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
-                OutlinedButton(
+                GlassOutlinedButton(
                     onClick = { showAddSessionDialog = true },
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text("Catat", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
                 }
@@ -2730,9 +2711,9 @@ fun MemoriesScreenTab() {
 
         if (togetherSessions.isEmpty()) {
             item {
-                Surface(
+                GlassSurface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(26.dp),
                     color = Color.White,
                     border = BorderStroke(1.dp, SidebyColors.GlassBorder)
                 ) {
@@ -2749,14 +2730,13 @@ fun MemoriesScreenTab() {
         }
 
         items(togetherSessions) { session ->
-            Surface(
+            GlassSurface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(26.dp),
                 color = Color.White,
                 border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                shadowElevation = 0.dp
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -2765,8 +2745,7 @@ fun MemoriesScreenTab() {
                     Box(
                         modifier = Modifier
                             .size(46.dp)
-                            .clip(CircleShape)
-                            .background(SidebyColors.SoftBlush),
+                            .glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.16f, elevation = 0.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Outlined.Place, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(22.dp))
@@ -2778,8 +2757,8 @@ fun MemoriesScreenTab() {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(session.dateString, fontSize = 10.sp, color = SidebyColors.TextSubtle)
                     }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
+                    GlassSurface(
+                        shape = RoundedCornerShape(50),
                         color = SidebyColors.SoftBlush
                     ) {
                         Text(
@@ -2803,10 +2782,10 @@ fun MemoriesScreenTab() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Hitung mundur", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
-                OutlinedButton(
+                GlassOutlinedButton(
                     onClick = { showAddDateDialog = true },
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text("Tambah", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
                 }
@@ -2816,9 +2795,9 @@ fun MemoriesScreenTab() {
 
         if (specialDates.isEmpty()) {
             item {
-                Surface(
+                GlassSurface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(26.dp),
                     color = Color.White,
                     border = BorderStroke(1.dp, SidebyColors.GlassBorder)
                 ) {
@@ -2830,14 +2809,13 @@ fun MemoriesScreenTab() {
         }
 
         items(specialDates) { item ->
-            Surface(
+            GlassSurface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 4.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(26.dp),
                 color = Color.White,
                 border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                shadowElevation = 0.dp
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -2849,8 +2827,8 @@ fun MemoriesScreenTab() {
                         Text(item.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = SidebyColors.TextDeep)
                         Text("Momen spesial berdua", fontSize = 12.sp, color = SidebyColors.TextMuted)
                     }
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
+                    GlassSurface(
+                        shape = RoundedCornerShape(50),
                         color = SidebyColors.SoftBlush
                     ) {
                         Text(
@@ -2874,10 +2852,10 @@ fun MemoriesScreenTab() {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Kenangan", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
-                OutlinedButton(
+                GlassOutlinedButton(
                     onClick = { showAddMemoryDialog = true },
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text("Tulis", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
                 }
@@ -2887,9 +2865,9 @@ fun MemoriesScreenTab() {
 
         if (memories.isEmpty()) {
             item {
-                Surface(
+                GlassSurface(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(26.dp),
                     color = Color.White,
                     border = BorderStroke(1.dp, SidebyColors.GlassBorder)
                 ) {
@@ -2901,14 +2879,13 @@ fun MemoriesScreenTab() {
         }
 
         items(memories) { mem ->
-            Surface(
+            GlassSurface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 6.dp),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(26.dp),
                 color = Color.White,
                 border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-                shadowElevation = 0.dp
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(mem.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SidebyColors.TextDeep)
@@ -2931,10 +2908,12 @@ fun MemoriesScreenTab() {
         var durationInput by remember { mutableStateOf("120") }
         AlertDialog(
             onDismissRequest = { showAddSessionDialog = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
             title = { Text("Catat Kencan / Ketemuan", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    OutlinedTextField(
+                    GlassTextField(
                         value = placeInput,
                         onValueChange = { placeInput = it },
                         label = { Text("Lokasi Pertemuan") },
@@ -2943,7 +2922,7 @@ fun MemoriesScreenTab() {
                         shape = RoundedCornerShape(16.dp)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    GlassTextField(
                         value = durationInput,
                         onValueChange = { durationInput = it },
                         label = { Text("Durasi Kebersamaan") },
@@ -2954,7 +2933,7 @@ fun MemoriesScreenTab() {
                 }
             },
             confirmButton = {
-                Button(
+                GlassButton(
                     onClick = {
                         val durationMin = durationInput.toLongOrNull() ?: 60L
                         val now = System.currentTimeMillis()
@@ -2977,13 +2956,13 @@ fun MemoriesScreenTab() {
                         showAddSessionDialog = false
                         Toast.makeText(context, "Kencan berhasil dicatat!", Toast.LENGTH_SHORT).show()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                 ) {
                     Text("Simpan")
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showAddSessionDialog = false }) { Text("Batal") }
+                GlassOutlinedButton(onClick = { showAddSessionDialog = false }) { Text("Batal") }
             }
         )
     }
@@ -2996,10 +2975,12 @@ fun MemoriesScreenTab() {
 
         AlertDialog(
             onDismissRequest = { showAddDateDialog = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
             title = { Text("Tambah Tanggal Spesial", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    OutlinedTextField(
+                    GlassTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
                         label = { Text("Judul Acara / Momen") },
@@ -3014,7 +2995,7 @@ fun MemoriesScreenTab() {
                         onDateSelected = { dateMillis = it }
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    GlassTextField(
                         value = emojiInput,
                         onValueChange = { emojiInput = it },
                         label = { Text("Ikon Emoji") },
@@ -3025,7 +3006,7 @@ fun MemoriesScreenTab() {
                 }
             },
             confirmButton = {
-                Button(
+                GlassButton(
                     onClick = {
                         if (titleInput.isNotBlank()) {
                             val newItem = SpecialDate(
@@ -3038,13 +3019,13 @@ fun MemoriesScreenTab() {
                             showAddDateDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                 ) {
                     Text("Simpan")
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showAddDateDialog = false }) { Text("Batal") }
+                GlassOutlinedButton(onClick = { showAddDateDialog = false }) { Text("Batal") }
             }
         )
     }
@@ -3055,10 +3036,12 @@ fun MemoriesScreenTab() {
         var memDesc by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showAddMemoryDialog = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
             title = { Text("Tulis Kenangan Baru", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    OutlinedTextField(
+                    GlassTextField(
                         value = memTitle,
                         onValueChange = { memTitle = it },
                         label = { Text("Judul Kenangan") },
@@ -3066,7 +3049,7 @@ fun MemoriesScreenTab() {
                         shape = RoundedCornerShape(16.dp)
                     )
                     Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
+                    GlassTextField(
                         value = memDesc,
                         onValueChange = { memDesc = it },
                         label = { Text("Cerita Momen Ini") },
@@ -3077,7 +3060,7 @@ fun MemoriesScreenTab() {
                 }
             },
             confirmButton = {
-                Button(
+                GlassButton(
                     onClick = {
                         if (memTitle.isNotBlank()) {
                             val newMem = MemoryItem(
@@ -3090,13 +3073,13 @@ fun MemoriesScreenTab() {
                             showAddMemoryDialog = false
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                 ) {
                     Text("Simpan")
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showAddMemoryDialog = false }) { Text("Batal") }
+                GlassOutlinedButton(onClick = { showAddMemoryDialog = false }) { Text("Batal") }
             }
         )
     }
@@ -3119,12 +3102,11 @@ fun SettingsScreenTab(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Surface(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = Color.White,
+            shape = RoundedCornerShape(30.dp),
+            color = SidebyColors.CardSurface,
             border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-            shadowElevation = 0.dp
         ) {
             Column(modifier = Modifier.padding(22.dp)) {
                 Text("Room", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
@@ -3149,7 +3131,7 @@ fun SettingsScreenTab(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                OutlinedButton(
+                GlassOutlinedButton(
                     onClick = {
                         coroutineScope.launch {
                             config?.let {
@@ -3159,7 +3141,7 @@ fun SettingsScreenTab(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(24.dp)
                 ) {
                     Text("Sinkronkan ulang", fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
                 }
@@ -3168,12 +3150,11 @@ fun SettingsScreenTab(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Surface(
+        GlassSurface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = Color.White,
+            shape = RoundedCornerShape(30.dp),
+            color = SidebyColors.CardSurface,
             border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-            shadowElevation = 0.dp
         ) {
             Column(modifier = Modifier.padding(22.dp)) {
                 Text("Jam tangan Wear OS", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
@@ -3184,7 +3165,7 @@ fun SettingsScreenTab(
                     color = SidebyColors.TextMuted
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                Button(
+                GlassButton(
                     onClick = {
                         coroutineScope.launch {
                             val msg = PokeMessage(PokeType.HEARTBEAT, "Uji Coba")
@@ -3197,8 +3178,8 @@ fun SettingsScreenTab(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                    shape = RoundedCornerShape(24.dp),
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
                 ) {
                     Text("Kirim getaran tes", fontWeight = FontWeight.Bold, color = Color.White)
                 }
@@ -3212,11 +3193,11 @@ fun SettingsScreenTab(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Reset Setup
-        OutlinedButton(
+        GlassOutlinedButton(
             onClick = { onResetSetup() },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
+            shape = RoundedCornerShape(24.dp),
+            colors = GlassButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
         ) {
             Text("Keluar dari room", fontWeight = FontWeight.Bold)
         }
@@ -3239,7 +3220,7 @@ fun SettingsScreenTab(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(8.dp + LocalBottomBarInset.current))
     }
 }
 

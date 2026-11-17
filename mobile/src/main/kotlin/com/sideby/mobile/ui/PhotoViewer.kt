@@ -276,7 +276,11 @@ fun PhotoViewerDialog(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF0E0C0D))
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color(0xFF1A1228), Color(0xFF0C0A12))
+                    )
+                )
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding()
@@ -287,7 +291,7 @@ fun PhotoViewerDialog(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     if (live.senderName.isNotBlank()) {
-                        Text(live.senderName, color = Color.White, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(live.senderName, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
                     }
                     Text(
                         SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale("id", "ID")).format(Date(live.timestamp)),
@@ -295,11 +299,25 @@ fun PhotoViewerDialog(
                         fontSize = 12.sp
                     )
                 }
-                IconButton(onClick = save) {
-                    Icon(Icons.Filled.Download, contentDescription = "Simpan ke galeri", tint = Color.White)
+                Box(
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(42.dp)
+                        .glass(CircleShape, Color.White, fillAlpha = 0.14f, elevation = 0.dp)
+                        .bounceClick(pressedScale = 0.88f) { save() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = "Simpan ke galeri", tint = Color.White, modifier = Modifier.size(22.dp))
                 }
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Tutup", tint = Color.White)
+                Box(
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .size(42.dp)
+                        .glass(CircleShape, Color.White, fillAlpha = 0.14f, elevation = 0.dp)
+                        .bounceClick(pressedScale = 0.88f) { onDismiss() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = "Tutup", tint = Color.White, modifier = Modifier.size(22.dp))
                 }
             }
 
@@ -328,8 +346,11 @@ fun PhotoViewerDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color.White, androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                        .padding(14.dp)
+                        .glass(
+                            androidx.compose.foundation.shape.RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+                            Color.White, fillAlpha = 0.80f, elevation = 0.dp
+                        )
+                        .padding(16.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -349,9 +370,10 @@ fun PhotoViewerDialog(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .graphicsLayer { scaleX = scale; scaleY = scale }
-                                    .clip(CircleShape)
-                                    .background(if (selected) SidebyColors.TintRose else SidebyColors.DelicatePink)
-                                    .then(if (selected) Modifier.border(1.5.dp, SidebyColors.RosePrimary, CircleShape) else Modifier)
+                                    .then(
+                                        if (selected) Modifier.glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.30f, elevation = 6.dp)
+                                        else Modifier.glass(CircleShape, Color.White, fillAlpha = 0.45f, elevation = 0.dp)
+                                    )
                                     .bounceClick(pressedScale = 0.8f) {
                                         if (!selected) rise = e to ++riseCounter
                                         scope.launch { setMyReaction(context, live.id, e) }
@@ -388,8 +410,7 @@ fun PhotoViewerDialog(
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         "Komentar (${comments.size})",
-                        fontFamily = FontFamily.Serif,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp,
                         color = SidebyColors.TextDeep
                     )

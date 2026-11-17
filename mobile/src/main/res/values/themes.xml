@@ -1,6 +1,8 @@
 <resources>
     <style name="Theme.Sideby" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:statusBarColor">#FFF0F5</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">#F6F0FF</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
