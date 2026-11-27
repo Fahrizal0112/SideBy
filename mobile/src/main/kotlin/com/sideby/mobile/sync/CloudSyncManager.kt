@@ -41,7 +41,7 @@ import java.util.UUID
 
 @Serializable
 data class SyncPayload(
-    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT", "REACT", "READ", "ANNIV", "ANNIV_OPEN"
+    val type: String, // "CONFIG", "STATUS", "POKE", "SNAPSHOT", "CHAT", "REACT", "READ", "ANNIV", "ANNIV_OPEN", "NAMES"
     val senderRole: String = "", // "CREATOR" or "PARTNER"
     val senderId: String = "", // Device UUID to avoid self-echo
     val configData: CoupleRoomConfig? = null,
@@ -51,6 +51,7 @@ data class SyncPayload(
     val chatData: com.sideby.mobile.data.ChatMessage? = null,
     val reactData: com.sideby.mobile.data.PhotoReaction? = null,
     val annivData: com.sideby.mobile.data.AnniversaryNote? = null,
+    val names: com.sideby.mobile.data.NamesUpdate? = null,
     /** Untuk tipe "READ": semua pesanku dengan penanda waktu sampai sini sudah dibaca pasangan. */
     val readUpTo: Long = 0L,
     val timestamp: Long = System.currentTimeMillis()
@@ -449,6 +450,37 @@ object CloudSyncManager {
         )
     }
 
+    private val namesFlushMutex = kotlinx.coroutines.sync.Mutex()
+
+    /** Ganti nama sendiri dan nama pasangan: terapkan di HP ini, lalu kabari pasangan (diulang otomatis bila gagal). */
+    suspend fun renameBoth(context: Context, myName: String, partnerName: String) = withContext(Dispatchers.IO) {
+        val update = com.sideby.mobile.data.NamesUpdate(
+            senderName = myName.trim(),
+            receiverName = partnerName.trim(),
+            updatedAt = maxOf(System.currentTimeMillis(), MobileDataManager.getNamesUpdatedAt(context) + 1)
+        )
+        MobileDataManager.applyNames(context, update.senderName, update.receiverName, update.updatedAt)
+        MobileDataManager.setPendingNames(context, update)
+        flushPendingNames(context)
+        // Nama baruku juga ikut di status berikutnya (HP pasangan yang belum diperbarui pun melihatnya).
+        sendMyStatus(context)
+    }
+
+    suspend fun flushPendingNames(context: Context) = withContext(Dispatchers.IO) {
+        if (!namesFlushMutex.tryLock()) return@withContext
+        try {
+            val u = MobileDataManager.getPendingNames(context) ?: return@withContext
+            val role = if (MobileDataManager.isCreator(context)) "CREATOR" else "PARTNER"
+            val ok = sendToRelay(
+                MobileDataManager.getRoomCode(context),
+                SyncPayload(type = "NAMES", senderRole = role, senderId = MobileDataManager.getMyDeviceId(context), names = u)
+            )
+            if (ok) MobileDataManager.clearPendingNames(context, u)
+        } finally {
+            namesFlushMutex.unlock()
+        }
+    }
+
     private val annivFlushMutex = kotlinx.coroutines.sync.Mutex()
 
     /**
@@ -830,6 +862,8 @@ object CloudSyncManager {
                                     incoming.location
                                 }
                                 incoming.copy(
+                                    // Status yang dikirim sebelum nama diganti tidak boleh mengembalikan nama lama.
+                                    name = if (incomingStamp < MobileDataManager.getNamesUpdatedAt(context)) cur.name else incoming.name,
                                     // Baterai 0 / tidak diketahui jangan menimpa angka valid terakhir
                                     phoneBattery = if (incoming.phoneBattery.percentage > 0) incoming.phoneBattery else cur.phoneBattery,
                                     location = finalLocation,
@@ -889,6 +923,18 @@ object CloudSyncManager {
                                         com.sideby.mobile.util.VoiceNotes.ensureLocal(context, msg)
                                     }
                                 }
+                            }
+                        }
+                    }
+                    "NAMES" -> {
+                        payload.names?.let { n ->
+                            if (n.updatedAt > MobileDataManager.getNamesUpdatedAt(context) &&
+                                n.senderName.isNotBlank() && n.receiverName.isNotBlank()
+                            ) {
+                                // Dari sudut pandang HP ini: namaku = nama untuk penerima, nama pasangan = nama si pengirim.
+                                MobileDataManager.applyNames(context, n.receiverName, n.senderName, n.updatedAt)
+                                SidebyWidgetHelper.updateAllWidgets(context)
+                                sendMyStatus(context)
                             }
                         }
                     }

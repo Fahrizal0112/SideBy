@@ -35,6 +35,8 @@ object MobileDataManager {
     private const val KEY_CHAT = "key_chat_messages"
     private const val KEY_REACTIONS = "key_photo_reactions"
     private const val KEY_ANNIV = "key_anniv_notes"
+    private const val KEY_NAMES_AT = "key_names_updated_at"
+    private const val KEY_NAMES_PENDING = "key_names_pending"
     private const val KEY_CHAT_LAST_READ = "key_chat_last_read"
     private const val KEY_READ_OWED = "key_chat_read_owed"
     private const val KEY_READ_SENT = "key_chat_read_sent"
@@ -626,6 +628,55 @@ object MobileDataManager {
         val me = getMyDeviceId(context)
         val lastRead = getChatLastRead(context)
         return getChatMessages(context).count { it.senderId != me && it.timestamp > lastRead }
+    }
+
+    // ==========================================
+    // GANTI NAMA (nama sendiri + nama pasangan)
+    // ==========================================
+    fun getNamesUpdatedAt(context: Context): Long =
+        prefs(context).getLong(getRoomKey(context, KEY_NAMES_AT), 0L)
+
+    /**
+     * Terapkan nama baru di HP ini: konfigurasi room, status, dan judul ulang tahun di hitung mundur.
+     * Dipakai saat aku mengganti nama sendiri maupun saat perubahan dari pasangan masuk.
+     */
+    fun applyNames(context: Context, myName: String, partnerName: String, updatedAt: Long) = synchronized(statusLock) {
+        val oldMy = getMyStatus(context).name
+        val oldPartner = getPartnerStatus(context).name
+        getRoomConfig(context)?.let { cfg ->
+            val next = if (isCreator(context)) cfg.copy(creatorName = myName, partnerName = partnerName)
+            else cfg.copy(partnerName = myName, creatorName = partnerName)
+            prefs(context).edit().putString(KEY_ROOM_CONFIG, json.encodeToString(next)).apply()
+        }
+        updateMyStatus(context) { it.copy(name = myName) }
+        updatePartnerStatus(context) { it.copy(name = partnerName) }
+        // Judul "Ulang Tahun <nama>" di hitung mundur ikut diganti.
+        val dates = getSpecialDates(context)
+        val renamed = dates.map {
+            when (it.title) {
+                "Ulang Tahun $oldPartner \uD83C\uDF82" -> it.copy(title = "Ulang Tahun $partnerName \uD83C\uDF82")
+                "Ulang Tahun $oldMy \uD83C\uDF89" -> it.copy(title = "Ulang Tahun $myName \uD83C\uDF89")
+                else -> it
+            }
+        }
+        if (renamed != dates) saveSpecialDates(context, renamed)
+        prefs(context).edit().putLong(getRoomKey(context, KEY_NAMES_AT), updatedAt).apply()
+        dataVersionCounter.incrementAndGet()
+    }
+
+    fun setPendingNames(context: Context, u: NamesUpdate) {
+        prefs(context).edit().putString(getRoomKey(context, KEY_NAMES_PENDING), json.encodeToString(u)).apply()
+    }
+
+    fun getPendingNames(context: Context): NamesUpdate? {
+        val raw = prefs(context).getString(getRoomKey(context, KEY_NAMES_PENDING), null) ?: return null
+        return try { json.decodeFromString<NamesUpdate>(raw) } catch (e: Exception) { null }
+    }
+
+    fun clearPendingNames(context: Context, u: NamesUpdate) {
+        if (getPendingNames(context)?.updatedAt == u.updatedAt) {
+            prefs(context).edit().remove(getRoomKey(context, KEY_NAMES_PENDING)).apply()
+        }
     }
 
     // ==========================================

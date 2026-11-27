@@ -112,6 +112,10 @@ class SidebyBackgroundSyncService : Service() {
                         serviceScope.launch { CloudSyncManager.flushPendingAnniv(applicationContext, wait = false) }
                     }
 
+                    if (MobileDataManager.getPendingNames(applicationContext) != null) {
+                        serviceScope.launch { CloudSyncManager.flushPendingNames(applicationContext) }
+                    }
+
                     if (MobileDataManager.getUnsentReadMark(applicationContext) > 0L) {
                         serviceScope.launch { CloudSyncManager.flushReadReceipt(applicationContext) }
                     }

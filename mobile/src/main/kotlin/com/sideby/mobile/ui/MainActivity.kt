@@ -893,7 +893,7 @@ fun SidebyMainApp(
         AnniversaryPopups()
 
         Column(modifier = Modifier.fillMaxSize().imePadding()) {
-            val myName = remember { MobileDataManager.getMyStatus(context).name }
+            val myName by rememberMyName()
             val days = remember { MobileDataManager.getDaysTogether(context) }
             Row(
                 modifier = Modifier
@@ -995,6 +995,26 @@ fun SidebyMainApp(
 // ==========================================
 // TAB 1: BERDUA
 // ==========================================
+
+/** Nama sendiri yang ikut berubah begitu diganti di Setelan (atau diganti dari HP pasangan). */
+@Composable
+private fun rememberMyName(): androidx.compose.runtime.State<String> {
+    val context = LocalContext.current
+    val state = remember { mutableStateOf(MobileDataManager.getMyStatus(context).name) }
+    LaunchedEffect(Unit) {
+        var last = -1L
+        while (true) {
+            val v = MobileDataManager.dataVersion()
+            if (v != last) {
+                last = v
+                val n = withContext(Dispatchers.IO) { MobileDataManager.getMyStatus(context).name }
+                if (state.value != n) state.value = n
+            }
+            delay(1000)
+        }
+    }
+    return state
+}
 
 /** Dekode gambar di luar main thread, dan hanya ulang bila isi gambarnya berubah. */
 @Composable
@@ -3537,7 +3557,9 @@ fun SettingsScreenTab(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val config = MobileDataManager.getRoomConfig(context)
+    var nameTick by remember { mutableIntStateOf(0) }
+    var showRename by remember { mutableStateOf(false) }
+    val config = remember(nameTick) { MobileDataManager.getRoomConfig(context) }
 
     Column(
         modifier = Modifier
@@ -3562,17 +3584,25 @@ fun SettingsScreenTab(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Panggilan Kamu: ${if (MobileDataManager.isCreator(context)) config?.creatorName else config?.partnerName}",
+                    text = "Namamu: ${if (MobileDataManager.isCreator(context)) config?.creatorName else config?.partnerName}",
                     fontSize = 13.sp,
                     color = SidebyColors.TextMuted
                 )
                 Text(
-                    text = "Panggilan Pasangan: ${if (MobileDataManager.isCreator(context)) config?.partnerName else config?.creatorName}",
+                    text = "Nama pasangan: ${if (MobileDataManager.isCreator(context)) config?.partnerName else config?.creatorName}",
                     fontSize = 13.sp,
                     color = SidebyColors.TextMuted
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                GlassButton(
+                    onClick = { showRename = true },
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(25.dp)
+                ) { Text("Ubah nama", fontWeight = FontWeight.Bold) }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 GlassOutlinedButton(
                     onClick = {
@@ -3664,6 +3694,69 @@ fun SettingsScreenTab(
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp + LocalBottomBarInset.current))
+    }
+
+    // ---- Ubah nama (namaku + nama pasangan) ----
+    if (showRename) {
+        val currentMy = remember { MobileDataManager.getMyStatus(context).name }
+        val currentPartner = remember { MobileDataManager.getPartnerStatus(context).name }
+        var myInput by remember { mutableStateOf(currentMy) }
+        var partnerInput by remember { mutableStateOf(currentPartner) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
+            title = { Text("Ubah nama", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column {
+                    GlassTextField(
+                        value = myInput,
+                        onValueChange = { if (it.length <= 20) myInput = it },
+                        label = { Text("Namamu") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    GlassTextField(
+                        value = partnerInput,
+                        onValueChange = { if (it.length <= 20) partnerInput = it },
+                        label = { Text("Nama pasangan") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        "Nama baru ikut berubah di HP pasanganmu. Foto dan pesan lama tetap memakai nama saat itu.",
+                        fontSize = 12.sp, lineHeight = 17.sp, color = SidebyColors.TextMuted
+                    )
+                }
+            },
+            confirmButton = {
+                GlassButton(
+                    onClick = {
+                        val my = myInput.trim()
+                        val partner = partnerInput.trim()
+                        when {
+                            my.isBlank() || partner.isBlank() ->
+                                Toast.makeText(context, "Kedua nama harus diisi", Toast.LENGTH_SHORT).show()
+                            my == currentMy && partner == currentPartner -> showRename = false
+                            else -> {
+                                showRename = false
+                                coroutineScope.launch {
+                                    CloudSyncManager.renameBoth(context, my, partner)
+                                    nameTick++
+                                    Toast.makeText(context, "Nama diperbarui", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    },
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                ) { Text("Simpan", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                GlassOutlinedButton(onClick = { showRename = false }) { Text("Batal") }
+            }
+        )
     }
 }
 
