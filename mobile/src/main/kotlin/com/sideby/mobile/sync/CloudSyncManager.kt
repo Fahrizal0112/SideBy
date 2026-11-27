@@ -332,6 +332,22 @@ object CloudSyncManager {
         }
     }
 
+    /** true bila server memastikan berkas itu sudah tidak ada (404 / 410), bukan sekadar koneksi bermasalah. */
+    suspend fun isImageGone(imageUrl: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val conn = URL(imageUrl).openConnection() as HttpURLConnection
+            conn.requestMethod = "HEAD"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.setRequestProperty("User-Agent", "Sideby/1.0")
+            val code = conn.responseCode
+            conn.disconnect()
+            code == 404 || code == 410
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun downloadImageBytes(imageUrl: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
             val url = URL(imageUrl)

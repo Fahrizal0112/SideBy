@@ -527,7 +527,8 @@ fun PhotoViewerDialog(
 /** Satu foto di pager layar penuh: dibaca dari berkas di HP (atau diunduh bila belum ada), lalu bisa di-zoom. */
 @Composable
 private fun ViewerPage(snap: DailySnapshot, isCurrent: Boolean, onZoomedChange: (Boolean) -> Unit) {
-    val bitmap = rememberSnapshotBitmap(snap, 1600)
+    val image = rememberSnapshotImage(snap, 1600)
+    val bitmap = image.bitmap
     val currentFlag by rememberUpdatedState(isCurrent)
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (bitmap != null) {
@@ -536,8 +537,17 @@ private fun ViewerPage(snap: DailySnapshot, isCurrent: Boolean, onZoomedChange: 
                 modifier = Modifier.fillMaxSize(),
                 onZoomedChange = { if (currentFlag) onZoomedChange(it) }
             )
-        } else {
+        } else if (image.loading) {
             CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+        } else {
+            Text(
+                if (image.gone) "Foto ini sudah tidak tersedia\n(tidak ada di HP dan sudah hilang dari server)" else "Foto gagal dimuat.\nPeriksa koneksi internet lalu buka lagi.",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(32.dp)
+            )
         }
     }
 }

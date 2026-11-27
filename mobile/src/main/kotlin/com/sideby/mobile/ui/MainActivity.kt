@@ -1030,15 +1030,25 @@ internal fun rememberBitmap(base64: String?): ImageBitmap? {
  * Gambar sebuah foto untuk ditampilkan: dibaca dari berkas di HP (atau diunduh dari server bila belum ada)
  * dengan ukuran sesuai kebutuhan, di luar main thread. Cocok untuk foto sebanyak apa pun.
  */
+internal class SnapshotImage(val bitmap: ImageBitmap?, val loading: Boolean, val gone: Boolean)
+
 @Composable
-internal fun rememberSnapshotBitmap(snap: DailySnapshot?, maxDim: Int): ImageBitmap? {
+internal fun rememberSnapshotImage(snap: DailySnapshot?, maxDim: Int): SnapshotImage {
     val context = LocalContext.current
-    val state = produceState<ImageBitmap?>(initialValue = null, snap?.id, snap?.imageUrl, snap?.imageBase64?.length, maxDim) {
-        value = if (snap == null) null
-        else com.sideby.mobile.util.PhotoStore.load(context, snap, maxDim)?.asImageBitmap()
+    val state = produceState(SnapshotImage(null, true, false), snap?.id, snap?.imageUrl, snap?.imageBase64?.length, maxDim) {
+        if (snap == null) {
+            value = SnapshotImage(null, false, false)
+        } else {
+            val bmp = com.sideby.mobile.util.PhotoStore.load(context, snap, maxDim)?.asImageBitmap()
+            value = SnapshotImage(bmp, false, bmp == null && com.sideby.mobile.util.PhotoStore.isGone(snap.id))
+        }
     }
     return state.value
 }
+
+@Composable
+internal fun rememberSnapshotBitmap(snap: DailySnapshot?, maxDim: Int): ImageBitmap? =
+    rememberSnapshotImage(snap, maxDim).bitmap
 
 private fun relativeTime(millis: Long, now: Long): String {
     if (millis <= 0L) return ""
@@ -1342,6 +1352,9 @@ fun HomeScreenTab() {
     var isSaving by remember { mutableStateOf(false) }
 
     var showGalleryDialog by remember { mutableStateOf(false) }
+    // Foto di galeri yang pasti tidak bisa dimuat lagi (terdeteksi saat kotaknya tampil).
+    val goneIds = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    var confirmClean by remember { mutableStateOf(false) }
     var selectedFullPhoto by remember { mutableStateOf<DailySnapshot?>(null) }
     var chatMessages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var reactions by remember { mutableStateOf<List<PhotoReaction>>(emptyList()) }
@@ -1937,6 +1950,25 @@ fun HomeScreenTab() {
                             Icon(Icons.Default.Close, contentDescription = "Tutup", tint = SidebyColors.TextDeep)
                         }
                     }
+                    val goneNow = goneIds.filter { id -> galleryList.any { it.id == id } }
+                    if (goneNow.isNotEmpty()) {
+                        GlassSurface(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color(0xFFFFF4DD).copy(alpha = 0.75f),
+                            shadowElevation = 0.dp
+                        ) {
+                            Row(modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${goneNow.size} foto tidak bisa ditampilkan: tidak ada di HP dan sudah hilang dari server.",
+                                    fontSize = 12.sp, lineHeight = 16.sp, color = SidebyColors.TextDeep, modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = { confirmClean = true }) {
+                                    Text("Bersihkan", color = SidebyColors.RosePrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
 
                     if (galleryList.isEmpty()) {
@@ -1951,7 +1983,11 @@ fun HomeScreenTab() {
                             modifier = Modifier.fillMaxSize()
                         ) {
                             items(galleryList, key = { it.id }) { item ->
-                                val bmp = rememberSnapshotBitmap(item, 360)
+                                val img = rememberSnapshotImage(item, 360)
+                                val bmp = img.bitmap
+                                LaunchedEffect(img.gone) {
+                                    if (img.gone && item.id !in goneIds) goneIds.add(item.id)
+                                }
                                 Box(
                                     modifier = Modifier
                                         .aspectRatio(1f)
@@ -1962,8 +1998,16 @@ fun HomeScreenTab() {
                                 ) {
                                     if (bmp != null) {
                                         Image(bitmap = bmp, contentDescription = "Foto", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                    } else {
+                                    } else if (img.loading) {
                                         CircularProgressIndicator(modifier = Modifier.size(20.dp), color = SidebyColors.RosePrimary, strokeWidth = 2.dp)
+                                    } else {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(Icons.Outlined.PhotoCamera, contentDescription = null, tint = SidebyColors.TextSubtle, modifier = Modifier.size(22.dp))
+                                            Text(
+                                                if (img.gone) "Tidak tersedia" else "Gagal memuat",
+                                                fontSize = 10.sp, color = SidebyColors.TextSubtle, textAlign = TextAlign.Center
+                                            )
+                                        }
                                     }
                                     val badge = reactions.filter { it.photoId == item.id && it.emoji.isNotBlank() }.joinToString("") { it.emoji }
                                     if (badge.isNotEmpty()) {
@@ -1984,6 +2028,35 @@ fun HomeScreenTab() {
             }
         }
 
+    }
+
+    if (confirmClean) {
+        val toRemove = goneIds.filter { id -> galleryList.any { it.id == id } }.toSet()
+        AlertDialog(
+            onDismissRequest = { confirmClean = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
+            title = { Text("Bersihkan galeri?", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "${toRemove.size} foto ini tidak ada lagi di HP maupun di server, jadi tidak bisa dipulihkan. Entrinya dibuang dari galeri; foto lain tidak terpengaruh.",
+                    color = SidebyColors.TextMuted
+                )
+            },
+            confirmButton = {
+                GlassButton(
+                    onClick = {
+                        confirmClean = false
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) { MobileDataManager.removeSnapshotsFromGallery(context, toRemove) }
+                            goneIds.removeAll(toRemove)
+                        }
+                    },
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                ) { Text("Bersihkan", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { GlassOutlinedButton(onClick = { confirmClean = false }) { Text("Batal") } }
+        )
     }
 
     // ---- Foto layar penuh (zoom) + komentar ----

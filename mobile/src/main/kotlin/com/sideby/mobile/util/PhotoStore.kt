@@ -70,6 +70,11 @@ object PhotoStore {
             try { Base64.decode(it, Base64.DEFAULT) } catch (_: Exception) { null }
         }
 
+    // Foto yang pasti tidak bisa ditampilkan lagi (tidak ada di HP, dan sudah hilang dari server).
+    private val goneIds = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    fun isGone(id: String): Boolean = goneIds.contains(id)
+
     // Cache bitmap kecil supaya menggulir galeri dan menggeser foto tidak mendekode ulang terus.
     private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
@@ -106,6 +111,9 @@ object PhotoStore {
             } else if (!url.isNullOrBlank()) {
                 val bytes = CloudSyncManager.downloadImageBytes(url)
                 if (bytes != null && saveBytes(context, snap.id, bytes)) fresh = true
+                else if (CloudSyncManager.isImageGone(url)) goneIds.add(snap.id)
+            } else {
+                goneIds.add(snap.id) // tidak ada berkas, isi, maupun alamat: tidak mungkin dimuat
             }
         }
         if (!has(context, snap.id)) return@withContext null
@@ -114,8 +122,9 @@ object PhotoStore {
             // Isinya bukan gambar (mis. halaman galat dari server): buang supaya bisa dicoba lagi nanti.
             f.delete()
             synchronized(this@PhotoStore) { idSet(context).remove(snap.id) }
+            goneIds.add(snap.id)
             return@withContext null
         }
-        bmp?.also { cache.put(key, it) }
+        bmp?.also { cache.put(key, it); goneIds.remove(snap.id) }
     }
 }

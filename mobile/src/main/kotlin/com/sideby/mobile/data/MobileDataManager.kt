@@ -664,6 +664,15 @@ object MobileDataManager {
         dataVersionCounter.incrementAndGet()
     }
 
+    /** Buang foto yang sudah tidak punya gambar sama sekali (tidak ada berkas di HP dan hilang dari server) dari galeri. */
+    fun removeSnapshotsFromGallery(context: Context, ids: Set<String>) = synchronized(statusLock) {
+        if (ids.isEmpty()) return@synchronized
+        // Foto yang berkasnya ada di HP tidak pernah ikut dibuang.
+        val keep = getSnapshotGallery(context).filterNot { it.id in ids && !PhotoStore.has(context, it.id) }
+        saveSnapshotGallery(context, keep)
+        ids.forEach { removePendingSnapshot(context, it) }
+    }
+
     fun setPendingNames(context: Context, u: NamesUpdate) {
         prefs(context).edit().putString(getRoomKey(context, KEY_NAMES_PENDING), json.encodeToString(u)).apply()
     }
