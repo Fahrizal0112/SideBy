@@ -14,6 +14,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -887,6 +889,8 @@ fun SidebyMainApp(
     CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
     Box(modifier = Modifier.fillMaxSize()) {
         AuroraBackground()
+        // Pop-up catatan aniversary (H-1: tulis catatan, hari H: buka catatan pasangan).
+        AnniversaryPopups()
 
         Column(modifier = Modifier.fillMaxSize().imePadding()) {
             val myName = remember { MobileDataManager.getMyStatus(context).name }
@@ -3055,6 +3059,110 @@ fun RadarScreenTab() {
     }
 }
 
+private fun formatTogetherDuration(minutes: Long): String = when {
+    minutes < 60 -> "$minutes mnt"
+    minutes % 60 == 0L -> "${minutes / 60} jam"
+    else -> "${minutes / 60} jam ${minutes % 60} mnt"
+}
+
+/** Halaman penuh berisi seluruh riwayat ketemuan, dikelompokkan per bulan (terbaru di atas). */
+@Composable
+private fun MeetingHistoryDialog(sessions: List<TogetherSession>, onClose: () -> Unit, onAdd: () -> Unit) {
+    val monthFormat = remember { SimpleDateFormat("MMMM yyyy", Locale("id", "ID")) }
+    val grouped = remember(sessions) {
+        sessions.sortedByDescending { it.startTimeMillis }
+            .groupBy { monthFormat.format(Date(it.startTimeMillis)) }
+            .toList()
+    }
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            AuroraBackground()
+            Column(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali", tint = SidebyColors.TextDeep)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Riwayat ketemuan", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.5).sp, color = SidebyColors.TextDeep)
+                        Text(
+                            "${sessions.size} kali \u2022 total ${formatTogetherDuration(sessions.sumOf { it.durationMinutes })}",
+                            fontSize = 12.sp, color = SidebyColors.TextMuted
+                        )
+                    }
+                    GlassOutlinedButton(
+                        onClick = onAdd,
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                    ) { Text("Catat", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp + 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    grouped.forEach { (month, list) ->
+                        item(key = "h_$month") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    month.replaceFirstChar { it.uppercase() },
+                                    fontSize = 15.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "${list.size} kali \u2022 ${formatTogetherDuration(list.sumOf { it.durationMinutes })}",
+                                    fontSize = 12.sp, color = SidebyColors.TextMuted
+                                )
+                            }
+                        }
+                        items(list, key = { it.id }) { session ->
+                            GlassSurface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(24.dp),
+                                color = Color.White.copy(alpha = 0.45f),
+                                shadowElevation = 6.dp
+                            ) {
+                                Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(42.dp)
+                                            .glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.16f, elevation = 0.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(Icons.Outlined.Place, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(20.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(session.locationName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = SidebyColors.TextDeep)
+                                        Text(session.note, fontSize = 12.sp, color = SidebyColors.TextMuted)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(session.dateString, fontSize = 10.sp, color = SidebyColors.TextSubtle)
+                                    }
+                                    GlassSurface(shape = RoundedCornerShape(50), color = SidebyColors.SoftBlush, shadowElevation = 0.dp) {
+                                        Text(
+                                            "${session.durationMinutes} mnt",
+                                            fontSize = 11.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ==========================================
 // TAB 3: MOMEN & COUNTDOWN (LOG OTOMATIS)
 // ==========================================
@@ -3063,13 +3171,12 @@ fun MemoriesScreenTab() {
     val context = LocalContext.current
     val daysTogether = MobileDataManager.getDaysTogether(context)
     var specialDates by remember { mutableStateOf(MobileDataManager.getSpecialDates(context)) }
-    var memories by remember { mutableStateOf(MobileDataManager.getMemories(context)) }
     var togetherSessions by remember { mutableStateOf(MobileDataManager.getTogetherSessions(context)) }
     val partner = MobileDataManager.getPartnerStatus(context)
 
     var showAddDateDialog by remember { mutableStateOf(false) }
-    var showAddMemoryDialog by remember { mutableStateOf(false) }
     var showAddSessionDialog by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -3114,6 +3221,12 @@ fun MemoriesScreenTab() {
             Spacer(modifier = Modifier.height(22.dp))
         }
 
+        // CATATAN ANIVERSARY + PAJANGAN
+        item {
+            AnniversarySection()
+            Spacer(modifier = Modifier.height(22.dp))
+        }
+
         // BANNER KENCAN AKTIF
         if (partner.location.isNearby || MobileDataManager.getActiveSessionStartTime(context) > 0L) {
             item {
@@ -3149,84 +3262,59 @@ fun MemoriesScreenTab() {
             }
         }
 
-        // 2. RIWAYAT WAKTU KETEMUAN OTOMATIS
+        // 2. RIWAYAT KETEMUAN: ringkas di sini, daftar lengkapnya di halaman terpisah supaya tab ini tidak memanjang.
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Riwayat ketemuan", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
-                GlassOutlinedButton(
-                    onClick = { showAddSessionDialog = true },
-                    shape = RoundedCornerShape(50),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text("Catat", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (togetherSessions.isEmpty()) {
-            item {
-                GlassSurface(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(26.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.dp, SidebyColors.GlassBorder)
-                ) {
-                    Box(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "Belum ada riwayat kencan. Log ini otomatis mencatat jam mulai & selesai setiap kali kalian bertemu (< 60m), atau tekan '+ Catat' untuk mencatat kencan hari ini.",
-                            fontSize = 12.sp,
-                            color = SidebyColors.TextMuted,
-                            lineHeight = 17.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        items(togetherSessions) { session ->
+            val totalMinutes = togetherSessions.sumOf { it.durationMinutes }
+            val last = togetherSessions.maxByOrNull { it.startTimeMillis }
             GlassSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                shape = RoundedCornerShape(26.dp),
-                color = Color.White,
-                border = BorderStroke(1.dp, SidebyColors.GlassBorder),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(30.dp),
+                color = Color.White.copy(alpha = 0.40f),
+                shadowElevation = 10.dp
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.16f, elevation = 0.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Outlined.Place, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(22.dp))
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .glass(CircleShape, SidebyColors.RosePrimary, fillAlpha = 0.16f, elevation = 0.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.Place, contentDescription = null, tint = SidebyColors.RosePrimary, modifier = Modifier.size(22.dp))
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Riwayat ketemuan", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
+                            Text(
+                                if (togetherSessions.isEmpty()) "Belum ada riwayat"
+                                else "${togetherSessions.size} kali ketemu \u2022 total ${formatTogetherDuration(totalMinutes)}",
+                                fontSize = 13.sp, color = SidebyColors.TextMuted
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(session.locationName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = SidebyColors.TextDeep)
-                        Text(session.note, fontSize = 12.sp, color = SidebyColors.TextMuted)
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(session.dateString, fontSize = 10.sp, color = SidebyColors.TextSubtle)
-                    }
-                    GlassSurface(
-                        shape = RoundedCornerShape(50),
-                        color = SidebyColors.SoftBlush
-                    ) {
+                    if (last != null) {
                         Text(
-                            text = "${session.durationMinutes} mnt",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = SidebyColors.RosePrimary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            "Terakhir: ${last.locationName}, ${last.dateString}",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = SidebyColors.TextSubtle
                         )
+                    } else {
+                        Text(
+                            "Dicatat otomatis setiap kali kalian bertemu (kurang dari 60 m), atau tekan Catat untuk menambah sendiri.",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = SidebyColors.TextSubtle
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        GlassButton(
+                            onClick = { showHistory = true },
+                            enabled = togetherSessions.isNotEmpty(),
+                            modifier = Modifier.weight(1.4f).height(46.dp),
+                            shape = RoundedCornerShape(23.dp)
+                        ) { Text("Lihat semua", fontWeight = FontWeight.Bold) }
+                        GlassOutlinedButton(
+                            onClick = { showAddSessionDialog = true },
+                            modifier = Modifier.weight(1f).height(46.dp),
+                            shape = RoundedCornerShape(23.dp)
+                        ) { Text("Catat", fontWeight = FontWeight.Bold) }
                     }
                 }
             }
@@ -3301,64 +3389,14 @@ fun MemoriesScreenTab() {
                 }
             }
         }
+    }
 
-        // 4. MEMORY LOG (CATATAN KENANGAN)
-        item {
-            Spacer(modifier = Modifier.height(22.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Kenangan", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = SidebyColors.TextDeep)
-                GlassOutlinedButton(
-                    onClick = { showAddMemoryDialog = true },
-                    shape = RoundedCornerShape(50),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text("Tulis", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary)
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
-        if (memories.isEmpty()) {
-            item {
-                GlassSurface(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    shape = RoundedCornerShape(26.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.dp, SidebyColors.GlassBorder)
-                ) {
-                    Box(modifier = Modifier.padding(16.dp)) {
-                        Text("Belum ada kenangan yang dicatat. Tekan '+ Kenangan' untuk menulis cerita indah kalian berdua.", fontSize = 12.sp, color = SidebyColors.TextMuted)
-                    }
-                }
-            }
-        }
-
-        items(memories) { mem ->
-            GlassSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp),
-                shape = RoundedCornerShape(26.dp),
-                color = Color.White,
-                border = BorderStroke(1.dp, SidebyColors.GlassBorder),
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(mem.title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = SidebyColors.TextDeep)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(mem.description, fontSize = 13.sp, color = SidebyColors.TextMuted, lineHeight = 18.sp)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = SimpleDateFormat("dd MMMM yyyy", Locale("id", "ID")).format(Date(mem.dateMillis)),
-                        fontSize = 11.sp,
-                        color = SidebyColors.TextSubtle
-                    )
-                }
-            }
-        }
+    if (showHistory) {
+        MeetingHistoryDialog(
+            sessions = togetherSessions,
+            onClose = { showHistory = false },
+            onAdd = { showAddSessionDialog = true }
+        )
     }
 
     // Dialog Tambah Kencan Manual
@@ -3485,60 +3523,6 @@ fun MemoriesScreenTab() {
             },
             dismissButton = {
                 GlassOutlinedButton(onClick = { showAddDateDialog = false }) { Text("Batal") }
-            }
-        )
-    }
-
-    // Dialog Tambah Kenangan
-    if (showAddMemoryDialog) {
-        var memTitle by remember { mutableStateOf("") }
-        var memDesc by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAddMemoryDialog = false },
-            containerColor = SidebyColors.DialogSurface,
-            shape = RoundedCornerShape(30.dp),
-            title = { Text("Tulis Kenangan Baru", fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    GlassTextField(
-                        value = memTitle,
-                        onValueChange = { memTitle = it },
-                        label = { Text("Judul Kenangan") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    GlassTextField(
-                        value = memDesc,
-                        onValueChange = { memDesc = it },
-                        label = { Text("Cerita Momen Ini") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 4,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                }
-            },
-            confirmButton = {
-                GlassButton(
-                    onClick = {
-                        if (memTitle.isNotBlank()) {
-                            val newMem = MemoryItem(
-                                title = memTitle,
-                                description = memDesc,
-                                dateMillis = System.currentTimeMillis()
-                            )
-                            MobileDataManager.addMemory(context, newMem)
-                            memories = MobileDataManager.getMemories(context)
-                            showAddMemoryDialog = false
-                        }
-                    },
-                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
-                ) {
-                    Text("Simpan")
-                }
-            },
-            dismissButton = {
-                GlassOutlinedButton(onClick = { showAddMemoryDialog = false }) { Text("Batal") }
             }
         )
     }

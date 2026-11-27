@@ -12,8 +12,8 @@ android {
         applicationId = "com.sideby.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.20"
+        versionCode = 24
+        versionName = "1.23"
     }
 
     buildTypes {

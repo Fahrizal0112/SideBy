@@ -134,38 +134,36 @@ data class SpecialDate(
     val emoji: String = "🎉",
     val isRecurringYearly: Boolean = true
 ) {
+    /**
+     * Sisa hari menurut kalender: besok = 1, hari ini = 0. Dihitung dari awal hari ke awal hari,
+     * jadi jam saat ini tidak membuat hasilnya lebih satu hari.
+     */
     val daysRemaining: Long
         get() {
-            val now = System.currentTimeMillis()
-            val nowCal = Calendar.getInstance().apply { timeInMillis = now }
-            val targetCal = Calendar.getInstance().apply { timeInMillis = targetDateMillis }
+            fun startOfDay(millis: Long): Calendar = Calendar.getInstance().apply {
+                timeInMillis = millis
+                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            }
+            val dayMillis = 24.0 * 60 * 60 * 1000
+            val today = startOfDay(System.currentTimeMillis())
 
             if (!isRecurringYearly) {
-                val diff = targetDateMillis - now
-                return if (diff > 0) ceil(diff.toDouble() / (1000 * 60 * 60 * 24)).toLong() else 0
+                val diff = startOfDay(targetDateMillis).timeInMillis - today.timeInMillis
+                return if (diff > 0) Math.round(diff / dayMillis) else 0L
             }
 
-            // Jika berulang tiap tahun (seperti Hari Jadian / Ulang Tahun)
-            val nextCal = Calendar.getInstance().apply {
-                timeInMillis = now
-                set(Calendar.MONTH, targetCal.get(Calendar.MONTH))
-                set(Calendar.DAY_OF_MONTH, targetCal.get(Calendar.DAY_OF_MONTH))
-                set(Calendar.HOUR_OF_DAY, 23)
-                set(Calendar.MINUTE, 59)
-                set(Calendar.SECOND, 59)
+            // Berulang tiap tahun (seperti Hari Jadian / Ulang Tahun): cari tanggal terdekat yang belum lewat.
+            val target = Calendar.getInstance().apply { timeInMillis = targetDateMillis }
+            fun occurrence(year: Int): Long {
+                val c = Calendar.getInstance()
+                c.clear()
+                c.set(year, target.get(Calendar.MONTH), 1, 0, 0, 0)
+                // 29 Februari jatuh ke 28 Februari di tahun biasa.
+                c.set(Calendar.DAY_OF_MONTH, minOf(target.get(Calendar.DAY_OF_MONTH), c.getActualMaximum(Calendar.DAY_OF_MONTH)))
+                return c.timeInMillis
             }
-
-            // Jika hari ulang tahun / jadian tahun ini sudah lewat
-            if (nextCal.timeInMillis < now) {
-                nextCal.add(Calendar.YEAR, 1)
-            }
-
-            // Cek apakah jatuh pada hari yang sama (Hari ini)
-            val isToday = nowCal.get(Calendar.YEAR) == nextCal.get(Calendar.YEAR) &&
-                    nowCal.get(Calendar.DAY_OF_YEAR) == nextCal.get(Calendar.DAY_OF_YEAR)
-            if (isToday) return 0L
-
-            val diff = nextCal.timeInMillis - now
-            return if (diff > 0) ceil(diff.toDouble() / (1000 * 60 * 60 * 24)).toLong() else 0L
+            var next = occurrence(today.get(Calendar.YEAR))
+            if (next < today.timeInMillis) next = occurrence(today.get(Calendar.YEAR) + 1)
+            return Math.round((next - today.timeInMillis) / dayMillis)
         }
 }

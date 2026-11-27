@@ -34,6 +34,7 @@ object MobileDataManager {
     private const val KEY_PENDING_SNAPSHOTS = "key_pending_snapshots"
     private const val KEY_CHAT = "key_chat_messages"
     private const val KEY_REACTIONS = "key_photo_reactions"
+    private const val KEY_ANNIV = "key_anniv_notes"
     private const val KEY_CHAT_LAST_READ = "key_chat_last_read"
     private const val KEY_READ_OWED = "key_chat_read_owed"
     private const val KEY_READ_SENT = "key_chat_read_sent"
@@ -625,6 +626,108 @@ object MobileDataManager {
         val me = getMyDeviceId(context)
         val lastRead = getChatLastRead(context)
         return getChatMessages(context).count { it.senderId != me && it.timestamp > lastRead }
+    }
+
+    // ==========================================
+    // CATATAN ANIVERSARY
+    // ==========================================
+    fun getAnnivNotes(context: Context): List<AnniversaryNote> {
+        val raw = prefs(context).getString(getRoomKey(context, KEY_ANNIV), null) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<AnniversaryNote>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveAnnivNotes(context: Context, list: List<AnniversaryNote>) {
+        prefs(context).edit().putString(getRoomKey(context, KEY_ANNIV), json.encodeToString(list.sortedBy { it.year })).apply()
+        dataVersionCounter.incrementAndGet()
+    }
+
+    private fun upsertAnniv(cur: List<AnniversaryNote>, n: AnniversaryNote): List<AnniversaryNote> =
+        cur.filterNot { it.year == n.year && it.authorId == n.authorId } + n
+
+    /** Tulis / ubah catatanku untuk sebuah tahun. null bila sudah dibuka pasangan (tidak boleh diubah lagi). */
+    fun saveMyAnnivNote(context: Context, year: Int, text: String): AnniversaryNote? = synchronized(statusLock) {
+        val me = getMyDeviceId(context)
+        val cur = getAnnivNotes(context)
+        val existing = cur.firstOrNull { it.year == year && it.authorId == me }
+        if (existing != null && existing.openedAt > 0L) return@synchronized null
+        val clean = text.trim().take(AnniversaryNote.MAX_TEXT)
+        if (clean.isBlank()) return@synchronized null
+        val note = AnniversaryNote(
+            year = year,
+            authorId = me,
+            authorName = getMyStatus(context).name,
+            text = clean,
+            updatedAt = maxOf(System.currentTimeMillis(), (existing?.updatedAt ?: 0L) + 1),
+            pending = true
+        )
+        saveAnnivNotes(context, upsertAnniv(cur, note))
+        note
+    }
+
+    /** Catatan pasangan yang masuk. @return true bila ada yang berubah. */
+    fun mergeIncomingAnnivNote(context: Context, incoming: AnniversaryNote): Boolean = synchronized(statusLock) {
+        if (incoming.text.isBlank() || incoming.authorId == getMyDeviceId(context)) return@synchronized false
+        val cur = getAnnivNotes(context)
+        val existing = cur.firstOrNull { it.year == incoming.year && it.authorId == incoming.authorId }
+        if (existing != null && existing.updatedAt >= incoming.updatedAt) return@synchronized false
+        val note = incoming.copy(
+            text = incoming.text.take(AnniversaryNote.MAX_TEXT),
+            openedAt = existing?.openedAt ?: 0L,
+            receiptPending = existing?.receiptPending ?: false,
+            pending = false
+        )
+        saveAnnivNotes(context, upsertAnniv(cur, note))
+        true
+    }
+
+    /** Pasangan memberi tahu bahwa ia sudah membuka catatanku. */
+    fun applyAnnivOpenReceipt(context: Context, year: Int, openedAt: Long): Boolean = synchronized(statusLock) {
+        val me = getMyDeviceId(context)
+        val cur = getAnnivNotes(context)
+        val mine = cur.firstOrNull { it.year == year && it.authorId == me } ?: return@synchronized false
+        if (mine.openedAt > 0L) return@synchronized false
+        saveAnnivNotes(context, upsertAnniv(cur, mine.copy(openedAt = if (openedAt > 0L) openedAt else System.currentTimeMillis())))
+        true
+    }
+
+    /** Aku membuka catatan pasangan: tandai dibuka dan antre tanda terimanya. */
+    fun markPartnerAnnivOpened(context: Context, year: Int, authorId: String): Boolean = synchronized(statusLock) {
+        val cur = getAnnivNotes(context)
+        val note = cur.firstOrNull { it.year == year && it.authorId == authorId } ?: return@synchronized false
+        if (note.openedAt > 0L) return@synchronized false
+        saveAnnivNotes(context, upsertAnniv(cur, note.copy(openedAt = System.currentTimeMillis(), receiptPending = true)))
+        true
+    }
+
+    fun getPendingAnnivNotes(context: Context): List<AnniversaryNote> {
+        val me = getMyDeviceId(context)
+        return getAnnivNotes(context).filter { it.authorId == me && it.pending }
+    }
+
+    fun getPendingAnnivReceipts(context: Context): List<AnniversaryNote> =
+        getAnnivNotes(context).filter { it.receiptPending }
+
+    fun markAnnivNoteSent(context: Context, n: AnniversaryNote) = synchronized(statusLock) {
+        val cur = getAnnivNotes(context)
+        // Hanya bila isinya belum berubah sejak dikirim.
+        if (cur.any { it.year == n.year && it.authorId == n.authorId && it.updatedAt == n.updatedAt && it.pending }) {
+            saveAnnivNotes(context, cur.map {
+                if (it.year == n.year && it.authorId == n.authorId) it.copy(pending = false) else it
+            })
+        }
+    }
+
+    fun markAnnivReceiptSent(context: Context, n: AnniversaryNote) = synchronized(statusLock) {
+        val cur = getAnnivNotes(context)
+        if (cur.any { it.year == n.year && it.authorId == n.authorId && it.receiptPending }) {
+            saveAnnivNotes(context, cur.map {
+                if (it.year == n.year && it.authorId == n.authorId) it.copy(receiptPending = false) else it
+            })
+        }
     }
 
     // ==========================================
