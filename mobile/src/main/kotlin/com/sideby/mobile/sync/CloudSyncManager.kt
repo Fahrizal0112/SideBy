@@ -466,6 +466,50 @@ object CloudSyncManager {
         )
     }
 
+    /**
+     * Ambil perubahan nama terakhir dari server dan terapkan di HP ini. Dipakai setelah masuk room lagi,
+     * karena kode room hanya membawa nama awal, bukan nama yang sudah pernah diganti.
+     */
+    suspend fun restoreLatestNames(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val room = MobileDataManager.getRoomCode(context)
+        if (room.isBlank() || room == "BELUM_DISET") return@withContext false
+        var best: SyncPayload? = null
+        for (server in RELAY_SERVERS) {
+            try {
+                val conn = URL("${getRoomUrl(server, room)}/json?poll=1&since=all&title=Sideby%20NAMES").openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 6000
+                conn.readTimeout = 7000
+                if (conn.responseCode == 200) {
+                    BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                        reader.lineSequence().forEach { line ->
+                            try {
+                                val msg = JSONObject(line).optString("message")
+                                if (msg.contains("\"type\":\"NAMES\"")) {
+                                    val p = json.decodeFromString<SyncPayload>(msg)
+                                    val n = p.names
+                                    if (n != null && n.senderName.isNotBlank() && n.receiverName.isNotBlank() &&
+                                        n.updatedAt > (best?.names?.updatedAt ?: 0L)
+                                    ) best = p
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+                conn.disconnect()
+            } catch (_: Exception) {}
+        }
+        val payload = best ?: return@withContext false
+        val n = payload.names ?: return@withContext false
+        if (n.updatedAt < MobileDataManager.getNamesUpdatedAt(context)) return@withContext false
+        // Siapa yang mengirim ditentukan dari id perangkat (bukan peran), karena peran bisa berubah saat masuk lagi.
+        val iAmSender = payload.senderId == MobileDataManager.getMyDeviceId(context)
+        val my = if (iAmSender) n.senderName else n.receiverName
+        val other = if (iAmSender) n.receiverName else n.senderName
+        MobileDataManager.applyNames(context, my, other, n.updatedAt)
+        true
+    }
+
     private val namesFlushMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Ganti nama sendiri dan nama pasangan: terapkan di HP ini, lalu kabari pasangan (diulang otomatis bila gagal). */

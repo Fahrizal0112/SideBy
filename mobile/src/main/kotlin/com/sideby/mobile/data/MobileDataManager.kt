@@ -160,7 +160,26 @@ object MobileDataManager {
             )
         }
 
-        saveSpecialDates(context, specialDates)
+        // Hitung mundur buatan sendiri (bukan jadian / ulang tahun otomatis) tidak ikut hilang saat masuk room lagi.
+        val custom = getSpecialDates(context).filter {
+            !it.title.startsWith("Hari Jadian") && !it.title.startsWith("Ulang Tahun")
+        }
+        saveSpecialDates(context, specialDates + custom)
+    }
+
+    /**
+     * Tukar peran di HP ini (pembuat room / yang bergabung) tanpa keluar dari room, lalu sesuaikan nama dan
+     * judul ulang tahun menurut sudut pandang yang baru. Berguna bila tidak sengaja masuk lagi sebagai peran yang salah.
+     */
+    fun setCreatorRole(context: Context, creator: Boolean) = synchronized(statusLock) {
+        val cfg = getRoomConfig(context) ?: return@synchronized
+        prefs(context).edit().putBoolean(KEY_IS_CREATOR, creator).apply()
+        val myName = if (creator) cfg.creatorName else cfg.partnerName
+        val partnerName = if (creator) cfg.partnerName else cfg.creatorName
+        updateMyStatus(context) { it.copy(name = myName) }
+        updatePartnerStatus(context) { it.copy(name = partnerName) }
+        relabelBirthdays(context)
+        dataVersionCounter.incrementAndGet()
     }
 
     fun getRoomConfig(context: Context): CoupleRoomConfig? {

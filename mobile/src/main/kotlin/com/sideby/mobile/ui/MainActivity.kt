@@ -379,6 +379,7 @@ fun SidebySetupWizardScreen(
     var partnerBirthdayMillis by remember { mutableLongStateOf(0L) }
 
     var joinRoomCode by remember { mutableStateOf("") }
+    var joinAsCreator by remember { mutableStateOf(false) }
     var isJoiningLoading by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -638,7 +639,32 @@ fun SidebySetupWizardScreen(
                                 singleLine = true
                             )
 
-                            Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            // Untuk yang tidak sengaja keluar dari room miliknya sendiri lalu masuk lagi.
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { joinAsCreator = !joinAsCreator }
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                androidx.compose.material3.Checkbox(
+                                    checked = joinAsCreator,
+                                    onCheckedChange = { joinAsCreator = it },
+                                    colors = androidx.compose.material3.CheckboxDefaults.colors(checkedColor = SidebyColors.RosePrimary)
+                                )
+                                Column {
+                                    Text("Saya yang membuat room ini", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = SidebyColors.TextDeep)
+                                    Text(
+                                        "Centang bila kamu pembuat room dan tidak sengaja keluar, supaya nama dan perannya kembali benar.",
+                                        fontSize = 12.sp, lineHeight = 16.sp, color = SidebyColors.TextMuted
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
 
                             GlassButton(
                                 onClick = {
@@ -652,7 +678,9 @@ fun SidebySetupWizardScreen(
                                         isJoiningLoading = false
 
                                         if (fetchedConfig != null) {
-                                            MobileDataManager.saveRoomConfig(context, fetchedConfig, isCreatorRole = false)
+                                            MobileDataManager.saveRoomConfig(context, fetchedConfig, isCreatorRole = joinAsCreator)
+                                            // Nama yang pernah diganti ikut dipulihkan dari server.
+                                            CloudSyncManager.restoreLatestNames(context)
                                                                                         CloudSyncManager.sendMyStatus(context)
                                             Toast.makeText(context, "Berhasil terhubung ke room ${fetchedConfig.roomCode}!", Toast.LENGTH_SHORT).show()
                                             onSetupCompleted()
@@ -665,7 +693,7 @@ fun SidebySetupWizardScreen(
                                                 myBirthdayMillis = 0L,
                                                 partnerBirthdayMillis = 0L
                                             )
-                                            MobileDataManager.saveRoomConfig(context, fallback, isCreatorRole = false)
+                                            MobileDataManager.saveRoomConfig(context, fallback, isCreatorRole = joinAsCreator)
                                                                                         CloudSyncManager.sendMyStatus(context)
                                             Toast.makeText(context, "Terhubung ke room $joinRoomCode!", Toast.LENGTH_SHORT).show()
                                             onSetupCompleted()
@@ -3636,6 +3664,8 @@ fun SettingsScreenTab(
     val coroutineScope = rememberCoroutineScope()
     var nameTick by remember { mutableIntStateOf(0) }
     var showRename by remember { mutableStateOf(false) }
+    var showRoleSwap by remember { mutableStateOf(false) }
+    var showLeave by remember { mutableStateOf(false) }
     val config = remember(nameTick) { MobileDataManager.getRoomConfig(context) }
     // Nama yang diganti dari HP pasangan ikut tampil tanpa harus keluar-masuk Setelan.
     LaunchedEffect(Unit) {
@@ -3682,11 +3712,27 @@ fun SettingsScreenTab(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                Text(
+                    text = "Peranmu: ${if (MobileDataManager.isCreator(context)) "pembuat room" else "bergabung dengan kode"}",
+                    fontSize = 13.sp,
+                    color = SidebyColors.TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 GlassButton(
                     onClick = { showRename = true },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     shape = RoundedCornerShape(25.dp)
                 ) { Text("Ubah nama", fontWeight = FontWeight.Bold) }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                GlassOutlinedButton(
+                    onClick = { showRoleSwap = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(24.dp)
+                ) { Text("Tukar peran (perbaiki nama tertukar)", fontWeight = FontWeight.Bold, color = SidebyColors.RosePrimary) }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -3753,7 +3799,7 @@ fun SettingsScreenTab(
 
         // Reset Setup
         GlassOutlinedButton(
-            onClick = { onResetSetup() },
+            onClick = { showLeave = true },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
             colors = GlassButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFD32F2F))
@@ -3780,6 +3826,65 @@ fun SettingsScreenTab(
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(modifier = Modifier.height(8.dp + LocalBottomBarInset.current))
+    }
+
+    // ---- Keluar dari room: minta konfirmasi supaya tidak terpencet ----
+    if (showLeave) {
+        AlertDialog(
+            onDismissRequest = { showLeave = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
+            title = { Text("Keluar dari room?", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "Chat dan foto tetap tersimpan di HP, dan kamu bisa masuk lagi dengan kode room. Kalau kamu yang membuat room ini, saat masuk lagi centang \"Saya yang membuat room ini\".",
+                    color = SidebyColors.TextMuted
+                )
+            },
+            confirmButton = {
+                GlassButton(
+                    onClick = { showLeave = false; onResetSetup() },
+                    colors = GlassButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                ) { Text("Keluar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { GlassOutlinedButton(onClick = { showLeave = false }) { Text("Batal") } }
+        )
+    }
+
+    // ---- Tukar peran (pembuat room <-> bergabung) ----
+    if (showRoleSwap) {
+        val creatorNow = MobileDataManager.isCreator(context)
+        AlertDialog(
+            onDismissRequest = { showRoleSwap = false },
+            containerColor = SidebyColors.DialogSurface,
+            shape = RoundedCornerShape(30.dp),
+            title = { Text("Tukar peran?", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "Sekarang kamu terdaftar sebagai ${if (creatorNow) "pembuat room" else "yang bergabung"}. " +
+                        "Kalau ditukar, kamu menjadi ${if (creatorNow) "yang bergabung" else "pembuat room"}: " +
+                        "namamu dan nama pasangan serta judul ulang tahun dipasangkan ulang. " +
+                        "Pakai ini bila namamu dan nama pasangan terlihat tertukar. Chat dan foto tidak berubah.",
+                    color = SidebyColors.TextMuted
+                )
+            },
+            confirmButton = {
+                GlassButton(
+                    onClick = {
+                        showRoleSwap = false
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) { MobileDataManager.setCreatorRole(context, !creatorNow) }
+                            CloudSyncManager.restoreLatestNames(context)
+                            CloudSyncManager.sendMyStatus(context)
+                            nameTick++
+                            Toast.makeText(context, "Peran ditukar", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = GlassButtonDefaults.buttonColors(containerColor = SidebyColors.RosePrimary)
+                ) { Text("Tukar", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { GlassOutlinedButton(onClick = { showRoleSwap = false }) { Text("Batal") } }
+        )
     }
 
     // ---- Ubah nama (namaku + nama pasangan) ----
