@@ -133,22 +133,27 @@ object MobileDataManager {
             )
         }
 
-        if (config.partnerBirthdayMillis > 0) {
+        // Di config, "myBirthday" = tanggal lahir PEMBUAT room dan "partnerBirthday" = tanggal lahir yang bergabung.
+        // Jadi di HP yang bergabung, tanggal lahirku adalah partnerBirthday (bukan myBirthday).
+        val ownBirthday = if (isCreatorRole) config.myBirthdayMillis else config.partnerBirthdayMillis
+        val otherBirthday = if (isCreatorRole) config.partnerBirthdayMillis else config.myBirthdayMillis
+
+        if (otherBirthday > 0) {
             specialDates.add(
                 SpecialDate(
                     title = "Ulang Tahun $partnerName 🎂",
-                    targetDateMillis = config.partnerBirthdayMillis,
+                    targetDateMillis = otherBirthday,
                     emoji = "🎂",
                     isRecurringYearly = true
                 )
             )
         }
 
-        if (config.myBirthdayMillis > 0) {
+        if (ownBirthday > 0) {
             specialDates.add(
                 SpecialDate(
                     title = "Ulang Tahun $myName 🎉",
-                    targetDateMillis = config.myBirthdayMillis,
+                    targetDateMillis = ownBirthday,
                     emoji = "🎉",
                     isRecurringYearly = true
                 )
@@ -641,8 +646,6 @@ object MobileDataManager {
      * Dipakai saat aku mengganti nama sendiri maupun saat perubahan dari pasangan masuk.
      */
     fun applyNames(context: Context, myName: String, partnerName: String, updatedAt: Long) = synchronized(statusLock) {
-        val oldMy = getMyStatus(context).name
-        val oldPartner = getPartnerStatus(context).name
         getRoomConfig(context)?.let { cfg ->
             val next = if (isCreator(context)) cfg.copy(creatorName = myName, partnerName = partnerName)
             else cfg.copy(partnerName = myName, creatorName = partnerName)
@@ -651,15 +654,7 @@ object MobileDataManager {
         updateMyStatus(context) { it.copy(name = myName) }
         updatePartnerStatus(context) { it.copy(name = partnerName) }
         // Judul "Ulang Tahun <nama>" di hitung mundur ikut diganti.
-        val dates = getSpecialDates(context)
-        val renamed = dates.map {
-            when (it.title) {
-                "Ulang Tahun $oldPartner \uD83C\uDF82" -> it.copy(title = "Ulang Tahun $partnerName \uD83C\uDF82")
-                "Ulang Tahun $oldMy \uD83C\uDF89" -> it.copy(title = "Ulang Tahun $myName \uD83C\uDF89")
-                else -> it
-            }
-        }
-        if (renamed != dates) saveSpecialDates(context, renamed)
+        relabelBirthdays(context)
         prefs(context).edit().putLong(getRoomKey(context, KEY_NAMES_AT), updatedAt).apply()
         dataVersionCounter.incrementAndGet()
     }
@@ -671,6 +666,32 @@ object MobileDataManager {
         val keep = getSnapshotGallery(context).filterNot { it.id in ids && !PhotoStore.has(context, it.id) }
         saveSnapshotGallery(context, keep)
         ids.forEach { removePendingSnapshot(context, it) }
+    }
+
+    /**
+     * Pasangkan judul "Ulang Tahun <nama>" dengan tanggal lahir yang benar menurut peran di HP ini.
+     * Juga memperbaiki data lama di HP yang bergabung, yang judulnya tertukar (nama pembuat di tanggal lahirku).
+     */
+    fun relabelBirthdays(context: Context) = synchronized(statusLock) {
+        val cfg = getRoomConfig(context) ?: return@synchronized
+        val creator = isCreator(context)
+        val myName = if (creator) cfg.creatorName else cfg.partnerName
+        val partnerName = if (creator) cfg.partnerName else cfg.creatorName
+        val ownBirthday = if (creator) cfg.myBirthdayMillis else cfg.partnerBirthdayMillis
+        val otherBirthday = if (creator) cfg.partnerBirthdayMillis else cfg.myBirthdayMillis
+        if (ownBirthday == otherBirthday) return@synchronized // hari lahir sama: tidak bisa dibedakan, biarkan
+        val dates = getSpecialDates(context)
+        val fixed = dates.map {
+            when {
+                !it.title.startsWith("Ulang Tahun") -> it
+                otherBirthday > 0 && it.targetDateMillis == otherBirthday ->
+                    it.copy(title = "Ulang Tahun $partnerName \uD83C\uDF82", emoji = "\uD83C\uDF82")
+                ownBirthday > 0 && it.targetDateMillis == ownBirthday ->
+                    it.copy(title = "Ulang Tahun $myName \uD83C\uDF89", emoji = "\uD83C\uDF89")
+                else -> it
+            }
+        }
+        if (fixed != dates) saveSpecialDates(context, fixed)
     }
 
     fun setPendingNames(context: Context, u: NamesUpdate) {

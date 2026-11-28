@@ -303,7 +303,11 @@ class MainActivity : ComponentActivity() {
         if (MobileDataManager.isSetupCompleted(this)) {
             SidebyBackgroundSyncService.start(this)
             // Foto lama (dulu tersimpan sebagai teks, maksimal 60) dipindah ke berkas; sekali saja.
-            Thread { try { MobileDataManager.migrateGalleryToFiles(applicationContext) } catch (_: Exception) {} }.start()
+            Thread {
+                try { MobileDataManager.migrateGalleryToFiles(applicationContext) } catch (_: Exception) {}
+                // Perbaiki judul ulang tahun yang tertukar di HP yang bergabung.
+                try { MobileDataManager.relabelBirthdays(applicationContext) } catch (_: Exception) {}
+            }.start()
         }
 
         setContent {
@@ -3633,6 +3637,15 @@ fun SettingsScreenTab(
     var nameTick by remember { mutableIntStateOf(0) }
     var showRename by remember { mutableStateOf(false) }
     val config = remember(nameTick) { MobileDataManager.getRoomConfig(context) }
+    // Nama yang diganti dari HP pasangan ikut tampil tanpa harus keluar-masuk Setelan.
+    LaunchedEffect(Unit) {
+        var last = MobileDataManager.getNamesUpdatedAt(context)
+        while (true) {
+            delay(1000)
+            val now = MobileDataManager.getNamesUpdatedAt(context)
+            if (now != last) { last = now; nameTick++ }
+        }
+    }
 
     Column(
         modifier = Modifier
